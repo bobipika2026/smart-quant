@@ -173,9 +173,14 @@ def list_strategies() -> List[Dict]:
     """列出所有可用策略"""
     strategies = []
     for name, cls in STRATEGY_REGISTRY.items():
+        # 创建临时实例获取名称和参数
+        try:
+            instance = cls()
+        except:
+            instance = cls(short_period=5, long_period=20)
         strategies.append({
             "id": name,
-            "name": cls(name="").name,
-            "params": cls(name="").params
+            "name": instance.name,
+            "params": instance.params
         })
     return strategies
