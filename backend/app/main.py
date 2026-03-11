@@ -1,0 +1,50 @@
+"""
+Smart Quant - 策略交易平台
+"""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api import strategy, stock
+from app.database import init_db
+
+app = FastAPI(
+    title="Smart Quant API",
+    description="开源策略交易平台 API",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+# CORS 配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 注册路由
+app.include_router(strategy.router)
+app.include_router(stock.router)
+
+
+@app.on_event("startup")
+async def startup():
+    """启动时初始化数据库"""
+    init_db()
+
+
+@app.get("/")
+async def root():
+    return {"message": "Smart Quant API", "version": "0.1.0"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
