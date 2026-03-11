@@ -178,28 +178,73 @@ class DataService:
     
     @staticmethod
     async def search_stocks(keyword: str) -> pd.DataFrame:
-        """搜索股票"""
-        keyword = keyword.strip().upper()
-        
-        # 常用股票列表（用于搜索匹配）
-        common_stocks = [
-            "000001", "000002", "000063", "000333", "000651", "000858",
-            "002415", "002594", "300750",
-            "600000", "600036", "600519", "601318", "601398", "601857",
-            "601166", "600276", "002304", "300059", "600030"
-        ]
-        
-        # 获取实时数据
-        data = await DataService._fetch_sina_data(common_stocks)
-        
-        if not data:
+        """搜索股票 - 支持全A股搜索"""
+        keyword = keyword.strip()
+        if not keyword:
             return pd.DataFrame()
         
-        # 过滤匹配的股票
-        results = []
-        for code, info in data.items():
-            name = info.get('名称', '')
-            if keyword in code or keyword in name.upper() or keyword.lower() in name:
-                results.append({"代码": code, **info})
+        # 尝试直接查询该股票（如果是6位数字代码）
+        if len(keyword) == 6 and keyword.isdigit():
+            data = await DataService._fetch_sina_data([keyword])
+            if data:
+                return pd.DataFrame([{"代码": keyword, **data[keyword]}])
         
-        return pd.DataFrame(results)
+        # 使用东方财富股票查询接口
+        try:
+            url = "https://searchapi.eastmoney.com/bussiness/web/QuotationLabelSearch"
+            params = {
+                "keyword": keyword,
+                "type": "stock",
+                "pi": 1,
+                "ps": 30,
+                "token": ""
+            }
+            
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, params=params, headers={
+                    'Referer': 'https://quote.eastmoney.com/',
+                    'User-Agent': 'Mozilla/5.0'
+                })
+                
+            if resp.status_code == 200:
+                result = resp.json()
+                stocks = []
+                if result.get('Data'):
+                    for item in result['Data']:
+                        code = item.get('Code', '')
+                        name = item.get('Name', '')
+                        market = item.get('MktNum', '')  # 市场代码
+                        
+                        # 过滤只保留A股
+                        if market in ['1', '2']:  # 1=沪市, 2=深市
+                            stocks.append({
+                                "代码": code,
+                                "名称": name,
+                                "最新价": item.get('Close', 0),
+                                "涨跌幅": round(item.get('ChangePercent', 0), 2),
+                                "成交量": item.get('Volume', 0)
+                            })
+                
+                if stocks:
+                    return pd.DataFrame(stocks)
+        except Exception as e:
+            print(f"[东方财富API] 搜索失败: {e}")
+        
+        # 备用：从预定义列表搜索
+        common_stocks = [
+            "000001", "000002", "000063", "000333", "000651", "000858",
+            "002415", "002594", "300750", "300059",
+            "600000", "600036", "600519", "600030", "600276",
+            "601318", "601398", "601857", "601166", "002304"
+        ]
+        
+        data = await DataService._fetch_sina_data(common_stocks)
+        if data:
+            results = []
+            for code, info in data.items():
+                name = info.get('名称', '')
+                if keyword.upper() in code or keyword in name:
+                    results.append({"代码": code, **info})
+            return pd.DataFrame(results)
+        
+        return pd.DataFrame()
