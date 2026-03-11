@@ -18,13 +18,17 @@ class DataService:
     SINA_QUOTE_URL = "https://hq.sinajs.cn/list={}"
     SINA_REALTIME_URL = "https://hq.sinajs.cn/list={}"
     
-    # 行业分类
-    INDUSTRY_MAP = {
-        "银行": ["000001", "600000", "600036", "601398", "601939"],
-        "白酒": ["000858", "600519"],
-        "家电": ["000333", "000651"],
-        "汽车": ["002594"],
-        "科技": ["000063", "002415", "300750"],
+    # 行业分类 - 常用股票预定义
+    INDUSTRY_STOCKS = {
+        "银行": ["000001", "600000", "600015", "600016", "600036", "601166", "601288", "601398", "601818", "601988", "601998", "600919", "601838", "600926", "002142"],
+        "证券": ["600030", "600837", "600109", "601211", "601688", "601788", "000776", "600958", "601990", "601198"],
+        "保险": ["601318", "601601", "601336", "000627"],
+        "白酒": ["000858", "600519", "000568", "000596", "002304"],
+        "汽车": ["000625", "000868", "002594", "601238", "601633", "600104", "000559"],
+        "医药": ["000538", "000661", "000963", "002007", "002044", "002821", "300003", "300015", "300122", "600276", "600196", "600436", "600521", "603259"],
+        "科技": ["000063", "000725", "002049", "002241", "002415", "002475", "300014", "300033", "300059", "300750", "600050", "600588", "603986"],
+        "地产": ["000002", "000656", "001979", "600048", "600340", "601155"],
+        "新能源": ["002594", "300014", "300274", "300750", "600438", "601012"],
     }
     
     @staticmethod
@@ -183,67 +187,96 @@ class DataService:
         if not keyword:
             return pd.DataFrame()
         
-        # 尝试直接查询该股票（如果是6位数字代码）
+        # 如果是6位数字代码，直接查询
         if len(keyword) == 6 and keyword.isdigit():
             data = await DataService._fetch_sina_data([keyword])
             if data:
                 return pd.DataFrame([{"代码": keyword, **data[keyword]}])
         
-        # 使用东方财富股票查询接口
+        stocks = []
+        
+        # 1. 首先检查行业关键词匹配
+        for industry, codes in DataService.INDUSTRY_STOCKS.items():
+            if keyword in industry or industry in keyword:
+                # 获取该行业所有股票的实时数据
+                data = await DataService._fetch_sina_data(codes)
+                for code, info in data.items():
+                    stocks.append({"代码": code, **info})
+        
+        # 2. 如果行业匹配找到了结果，直接返回
+        if stocks:
+            return pd.DataFrame(stocks[:20])
+        
+        # 3. 否则，从新浪财经获取A股列表搜索
         try:
-            url = "https://searchapi.eastmoney.com/bussiness/web/QuotationLabelSearch"
-            params = {
-                "keyword": keyword,
-                "type": "stock",
-                "pi": 1,
-                "ps": 30,
-                "token": ""
-            }
+            url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
             
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(url, params=params, headers={
-                    'Referer': 'https://quote.eastmoney.com/',
-                    'User-Agent': 'Mozilla/5.0'
-                })
-                
-            if resp.status_code == 200:
-                result = resp.json()
-                stocks = []
-                if result.get('Data'):
-                    for item in result['Data']:
-                        code = item.get('Code', '')
-                        name = item.get('Name', '')
-                        market = item.get('MktNum', '')  # 市场代码
+            async with httpx.AsyncClient(timeout=20) as client:
+                for node in ['sh_a', 'sz_a']:
+                    for page in range(1, 5):  # 增加到4页
+                        params = {
+                            'page': page,
+                            'num': 40,
+                            'sort': 'symbol',
+                            'asc': 1,
+                            'node': node,
+                            'symbol': '',
+                            '_s_r_a': 'page'
+                        }
                         
-                        # 过滤只保留A股
-                        if market in ['1', '2']:  # 1=沪市, 2=深市
-                            stocks.append({
-                                "代码": code,
-                                "名称": name,
-                                "最新价": item.get('Close', 0),
-                                "涨跌幅": round(item.get('ChangePercent', 0), 2),
-                                "成交量": item.get('Volume', 0)
+                        try:
+                            resp = await client.get(url, params=params, headers={
+                                'Referer': 'https://vip.stock.finance.sina.com.cn/',
+                                'User-Agent': 'Mozilla/5.0'
                             })
-                
-                if stocks:
-                    return pd.DataFrame(stocks)
+                            
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                if data and isinstance(data, list):
+                                    for item in data:
+                                        code = item.get('code', '')
+                                        name = item.get('name', '')
+                                        
+                                        if keyword in code or keyword in name:
+                                            stocks.append({
+                                                "代码": code,
+                                                "名称": name,
+                                                "最新价": float(item.get('trade', 0) or 0),
+                                                "涨跌幅": float(item.get('changepercent', 0) or 0),
+                                                "成交量": int(float(item.get('volume', 0) or 0))
+                                            })
+                        except:
+                            pass
+                        
+                        if len(stocks) >= 20:
+                            break
+                    if len(stocks) >= 20:
+                        break
+                        
         except Exception as e:
-            print(f"[东方财富API] 搜索失败: {e}")
+            print(f"[新浪A股列表API] 搜索失败: {e}")
         
-        # 备用：从预定义列表搜索
-        common_stocks = [
-            "000001", "000002", "000063", "000333", "000651", "000858",
-            "002415", "002594", "300750", "300059",
-            "600000", "600036", "600519", "600030", "600276",
-            "601318", "601398", "601857", "601166", "002304"
-        ]
+        if stocks:
+            seen = set()
+            unique_stocks = []
+            for s in stocks:
+                if s['代码'] not in seen:
+                    seen.add(s['代码'])
+                    unique_stocks.append(s)
+            return pd.DataFrame(unique_stocks[:20])
         
-        data = await DataService._fetch_sina_data(common_stocks)
+        # 4. 最终备用：预定义股票搜索
+        all_common = []
+        for codes in DataService.INDUSTRY_STOCKS.values():
+            all_common.extend(codes)
+        all_common = list(set(all_common))
+        
+        data = await DataService._fetch_sina_data(all_common)
         if data:
             results = []
             for code, info in data.items():
                 name = info.get('名称', '')
-                if keyword.upper() in code or keyword in name:
+                if keyword in code or keyword in name:
                     results.append({"代码": code, **info})
             return pd.DataFrame(results)
         
