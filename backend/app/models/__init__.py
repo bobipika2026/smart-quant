@@ -77,3 +77,7 @@ class BacktestResult(Base):
     trade_count = Column(Integer)
     details = Column(Text)  # JSON 格式的详细数据
     created_at = Column(DateTime, server_default=func.now())
+
+
+# 因子模型
+from app.models.factor import FactorValue, FactorBacktest, FactorPerformance

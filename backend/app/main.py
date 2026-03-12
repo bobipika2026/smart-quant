@@ -5,7 +5,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import strategy, stock, sync, monitor, picker
+from app.api import strategy, stock, sync, monitor, picker, factor
 from app.database import init_db
 from app.scheduler import start_scheduler, stop_scheduler
 
@@ -39,6 +39,7 @@ app.include_router(stock.router)
 app.include_router(sync.router)
 app.include_router(monitor.router)
 app.include_router(picker.router)
+app.include_router(factor.router)
 
 
 @app.on_event("startup")
