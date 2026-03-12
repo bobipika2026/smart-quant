@@ -80,6 +80,66 @@
       </n-descriptions>
     </n-card>
 
+    <!-- 策略评估建议 -->
+    <n-card v-if="result" title="📊 策略评估" style="margin-top: 16px">
+      <n-space vertical size="large">
+        <!-- 综合评分 -->
+        <n-card size="small" :bordered="false" style="background: #f5f7f9">
+          <n-space align="center">
+            <span style="font-size: 16px; font-weight: bold">综合评分：</span>
+            <n-rate :value="overallRating" readonly :count="5" />
+            <n-tag :type="overallRating >= 4 ? 'success' : overallRating >= 3 ? 'warning' : 'error'" size="large">
+              {{ ratingText }}
+            </n-tag>
+          </n-space>
+        </n-card>
+
+        <!-- 指标解读 -->
+        <n-grid :cols="3" :x-gap="16">
+          <n-gi>
+            <n-card size="small" title="💰 收益评估">
+              <n-space vertical>
+                <n-text>策略收益：<n-tag :type="returnTag.type" size="small">{{ returnTag.text }}</n-tag></n-text>
+                <n-text depth="3" style="font-size: 12px">{{ returnTag.advice }}</n-text>
+              </n-space>
+            </n-card>
+          </n-gi>
+          <n-gi>
+            <n-card size="small" title="📉 风险评估">
+              <n-space vertical>
+                <n-text>最大回撤：<n-tag :type="drawdownTag.type" size="small">{{ drawdownTag.text }}</n-tag></n-text>
+                <n-text depth="3" style="font-size: 12px">{{ drawdownTag.advice }}</n-text>
+              </n-space>
+            </n-card>
+          </n-gi>
+          <n-gi>
+            <n-card size="small" title="⚖️ 风险收益比">
+              <n-space vertical>
+                <n-text>夏普比率：<n-tag :type="sharpeTag.type" size="small">{{ sharpeTag.text }}</n-tag></n-text>
+                <n-text depth="3" style="font-size: 12px">{{ sharpeTag.advice }}</n-text>
+              </n-space>
+            </n-card>
+          </n-gi>
+        </n-grid>
+
+        <!-- 是否跑赢基准 -->
+        <n-alert :type="result.total_return > result.benchmark_return ? 'success' : 'warning'">
+          <template #header>
+            {{ result.total_return > result.benchmark_return ? '✅ 跑赢基准' : '⚠️ 未跑赢基准' }}
+          </template>
+          策略收益 {{ result.total_return }}% 
+          {{ result.total_return > result.benchmark_return ? '>' : '<' }} 
+          基准收益 {{ result.benchmark_return }}%
+          （{{ result.total_return > result.benchmark_return ? '超越' : '落后' }} {{ Math.abs(result.total_return - result.benchmark_return).toFixed(2) }}%）
+        </n-alert>
+
+        <!-- 投资建议 -->
+        <n-card size="small" title="💡 投资建议">
+          <n-text>{{ investmentAdvice }}</n-text>
+        </n-card>
+      </n-space>
+    </n-card>
+
     <n-card v-if="result?.equity_curve" title="收益曲线" style="margin-top: 16px">
       <v-chart :option="chartOption" style="height: 400px" autoresize />
     </n-card>
@@ -103,6 +163,7 @@ import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import axios from 'axios'
+import { NRate } from 'naive-ui'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -175,6 +236,91 @@ const tradeColumns = [
   { title: '数量', key: 'shares' },
   { title: '金额', key: 'value' }
 ]
+
+// 策略评估计算
+const returnTag = computed(() => {
+  const r = result.value?.total_return || 0
+  if (r >= 20) return { type: 'success', text: '优秀', advice: '收益表现优异，建议关注' }
+  if (r >= 10) return { type: 'success', text: '良好', advice: '收益表现良好，可考虑使用' }
+  if (r >= 0) return { type: 'warning', text: '一般', advice: '收益表现一般，谨慎使用' }
+  if (r >= -10) return { type: 'warning', text: '亏损', advice: '策略亏损，建议优化参数' }
+  return { type: 'error', text: '严重亏损', advice: '策略效果不佳，不建议使用' }
+})
+
+const drawdownTag = computed(() => {
+  const d = Math.abs(result.value?.max_drawdown || 0)
+  if (d <= 10) return { type: 'success', text: '低风险', advice: '回撤控制良好，风险较低' }
+  if (d <= 20) return { type: 'success', text: '中等风险', advice: '回撤适中，可接受范围' }
+  if (d <= 30) return { type: 'warning', text: '较高风险', advice: '回撤较大，需关注风险' }
+  return { type: 'error', text: '高风险', advice: '回撤过大，风险控制不佳' }
+})
+
+const sharpeTag = computed(() => {
+  const s = result.value?.sharpe_ratio || 0
+  if (s >= 2) return { type: 'success', text: '优秀', advice: '风险调整后收益极佳' }
+  if (s >= 1) return { type: 'success', text: '良好', advice: '风险调整后收益良好' }
+  if (s >= 0.5) return { type: 'warning', text: '一般', advice: '风险收益比一般' }
+  return { type: 'error', text: '较差', advice: '风险收益比不佳' }
+})
+
+const overallRating = computed(() => {
+  if (!result.value) return 0
+  let score = 0
+  
+  // 收益评分 (0-2分)
+  const r = result.value.total_return || 0
+  if (r >= 20) score += 2
+  else if (r >= 5) score += 1.5
+  else if (r >= 0) score += 1
+  else score += 0
+  
+  // 回撤评分 (0-1.5分)
+  const d = Math.abs(result.value.max_drawdown || 0)
+  if (d <= 10) score += 1.5
+  else if (d <= 20) score += 1
+  else if (d <= 30) score += 0.5
+  
+  // 夏普评分 (0-1.5分)
+  const s = result.value.sharpe_ratio || 0
+  if (s >= 1.5) score += 1.5
+  else if (s >= 1) score += 1
+  else if (s >= 0.5) score += 0.5
+  
+  return Math.min(5, Math.round(score))
+})
+
+const ratingText = computed(() => {
+  const r = overallRating.value
+  if (r >= 4) return '强烈推荐'
+  if (r >= 3) return '建议使用'
+  if (r >= 2) return '谨慎使用'
+  return '不建议使用'
+})
+
+const investmentAdvice = computed(() => {
+  if (!result.value) return ''
+  
+  const r = result.value.total_return || 0
+  const d = Math.abs(result.value.max_drawdown || 0)
+  const beat = result.value.total_return > result.value.benchmark_return
+  
+  if (r >= 15 && d <= 20 && beat) {
+    return '✅ 该策略表现优秀：收益可观、风险可控、跑赢基准。建议添加到监控，可在实盘中参考使用。'
+  }
+  if (r >= 5 && d <= 25 && beat) {
+    return '👍 该策略表现良好：收益为正、风险适中、跑赢基准。可以考虑添加监控，但建议进一步优化参数。'
+  }
+  if (r > 0 && beat) {
+    return '⚠️ 该策略表现一般：虽然跑赢基准，但收益较低。建议优化策略参数后再使用。'
+  }
+  if (r > 0 && !beat) {
+    return '⚠️ 该策略未跑赢基准：收益为正但不如简单持有。建议考虑其他策略或直接持有。'
+  }
+  if (d > 30) {
+    return '❌ 该策略风险过高：最大回撤超过30%，可能导致较大亏损。不建议使用。'
+  }
+  return '❌ 该策略效果不佳：收益为负。建议调整策略参数或选择其他策略。'
+})
 
 const runBacktest = async () => {
   running.value = true
