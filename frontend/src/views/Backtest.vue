@@ -241,8 +241,7 @@ const chartOption = computed(() => {
       }
     },
     legend: { 
-      data: ['策略市值', '基准市值', '买入点', '卖出点'],
-      selected: { '基准市值': false }
+      data: ['策略市值', '基准市值', '买入点', '卖出点']
     },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { type: 'category', data: dates },
