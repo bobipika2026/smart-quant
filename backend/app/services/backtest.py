@@ -47,15 +47,26 @@ class BacktestEngine:
         cash = self.initial_capital
         position = 0  # 持仓数量
         trades = []  # 交易记录
+        equity_curve = []  # 收益曲线
         
         # 遍历数据
         for i in range(len(df)):
-            if i == 0:
-                continue
-            
             price = df[close_col].iloc[i]
             signal = df[signal_col].iloc[i] if signal_col in df.columns else 0
             date = df[date_col].iloc[i] if date_col in df.columns else i
+            
+            # 记录当日市值
+            current_equity = cash + position * price
+            equity_curve.append({
+                'date': str(date),
+                'equity': round(current_equity, 2),
+                'cash': round(cash, 2),
+                'position': position,
+                'price': round(price, 2)
+            })
+            
+            if i == 0:
+                continue
             
             # 买入信号
             if signal == 1 and cash > 0:
@@ -65,11 +76,11 @@ class BacktestEngine:
                     cash -= cost
                     position += shares
                     trades.append({
-                        'date': date,
+                        'date': str(date),
                         'type': 'buy',
-                        'price': price,
+                        'price': round(price, 2),
                         'shares': shares,
-                        'value': cost
+                        'value': round(cost, 2)
                     })
             
             # 卖出信号
@@ -77,11 +88,11 @@ class BacktestEngine:
                 revenue = position * price * (1 - self.commission)
                 cash += revenue
                 trades.append({
-                    'date': date,
+                    'date': str(date),
                     'type': 'sell',
-                    'price': price,
+                    'price': round(price, 2),
                     'shares': position,
-                    'value': revenue
+                    'value': round(revenue, 2)
                 })
                 position = 0
         
@@ -90,7 +101,7 @@ class BacktestEngine:
         final_value = cash + position * final_price
         
         # 计算指标
-        results = self._calculate_metrics(df, final_value, trades, close_col, date_col)
+        results = self._calculate_metrics(df, final_value, trades, equity_curve, close_col, date_col)
         
         return results
     
@@ -99,6 +110,7 @@ class BacktestEngine:
         df: pd.DataFrame,
         final_value: float,
         trades: List[Dict],
+        equity_curve: List[Dict],
         close_col: str,
         date_col: str
     ) -> Dict:
@@ -143,6 +155,11 @@ class BacktestEngine:
         
         win_rate = win_trades / total_trades * 100 if total_trades > 0 else 0
         
+        # 计算基准收益（买入持有）
+        first_price = df[close_col].iloc[0]
+        last_price = df[close_col].iloc[-1]
+        benchmark_return = (last_price - first_price) / first_price * 100
+        
         return {
             'initial_capital': self.initial_capital,
             'final_value': round(final_value, 2),
@@ -152,5 +169,7 @@ class BacktestEngine:
             'sharpe_ratio': round(sharpe_ratio, 2),
             'win_rate': round(win_rate, 2),
             'trade_count': len(trades),
-            'trades': trades[:20]  # 只返回前20条交易记录
+            'benchmark_return': round(benchmark_return, 2),
+            'trades': trades,
+            'equity_curve': equity_curve
         }

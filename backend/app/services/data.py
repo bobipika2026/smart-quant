@@ -36,9 +36,12 @@ class DataService:
             "002797", "001979", "600999", "601928",  # 第一创业、招商蛇口、招商证券、凤凰传媒
         ],
         "保险": [
-            "000627", "000631",  # 天茂集团、顺发恒业
-            "601318", "601336", "601601", "601628", "601788", "601886", "601319",  # 中国平安、新华保险、中国太保、中国人寿、光大、银河、基金
-            "002419", "601939",  # 天虹、邮储
+            "000627",  # 天茂集团
+            "601318",  # 中国平安
+            "601336",  # 新华保险
+            "601601",  # 中国太保
+            "601628",  # 中国人寿
+            "601319",  # 中国人保
         ],
         "医药": [
             "000004", "000153", "000403", "000513", "000518", "000522", "000538", "000545", "000563", "000590",  # 国华、丰原、三九、丽珠、四环、白云山、云南白药、吉林制药、陕国投、紫光
@@ -307,7 +310,7 @@ class DataService:
     
     @staticmethod
     async def search_stocks(keyword: str) -> pd.DataFrame:
-        """搜索股票 - 支持全A股搜索"""
+        """搜索股票 - 优先从本地数据库搜索"""
         keyword = keyword.strip()
         if not keyword:
             return pd.DataFrame()
@@ -318,91 +321,50 @@ class DataService:
             if data:
                 return pd.DataFrame([{"代码": keyword, **data[keyword]}])
         
-        stocks = []
+        # 1. 从本地数据库搜索
+        from app.database import SessionLocal
+        from app.models import Stock
         
-        # 1. 首先检查行业关键词匹配
+        db = SessionLocal()
+        try:
+            # 模糊匹配代码或名称
+            db_stocks = db.query(Stock).filter(
+                (Stock.code.contains(keyword)) | (Stock.name.contains(keyword))
+            ).limit(100).all()
+            
+            if db_stocks:
+                # 获取实时行情
+                codes = [s.code for s in db_stocks]
+                realtime_data = await DataService._fetch_sina_data(codes)
+                
+                stocks = []
+                for stock in db_stocks:
+                    if stock.code in realtime_data:
+                        stocks.append({"代码": stock.code, **realtime_data[stock.code]})
+                    else:
+                        # 如果没有实时数据，返回基本信息
+                        stocks.append({
+                            "代码": stock.code,
+                            "名称": stock.name,
+                            "最新价": 0,
+                            "涨跌幅": 0,
+                            "成交量": 0
+                        })
+                
+                if stocks:
+                    return pd.DataFrame(stocks)
+        finally:
+            db.close()
+        
+        # 2. 如果数据库没找到，检查行业关键词
+        stocks = []
         for industry, codes in DataService.INDUSTRY_STOCKS.items():
             if keyword in industry or industry in keyword:
-                # 获取该行业所有股票的实时数据
                 data = await DataService._fetch_sina_data(codes)
                 for code, info in data.items():
                     stocks.append({"代码": code, **info})
         
-        # 2. 如果行业匹配找到了结果，直接返回（不限制数量）
         if stocks:
             return pd.DataFrame(stocks)
-        
-        # 3. 否则，从新浪财经获取A股列表搜索
-        try:
-            url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
-            
-            async with httpx.AsyncClient(timeout=20) as client:
-                for node in ['sh_a', 'sz_a']:
-                    for page in range(1, 5):  # 增加到4页
-                        params = {
-                            'page': page,
-                            'num': 40,
-                            'sort': 'symbol',
-                            'asc': 1,
-                            'node': node,
-                            'symbol': '',
-                            '_s_r_a': 'page'
-                        }
-                        
-                        try:
-                            resp = await client.get(url, params=params, headers={
-                                'Referer': 'https://vip.stock.finance.sina.com.cn/',
-                                'User-Agent': 'Mozilla/5.0'
-                            })
-                            
-                            if resp.status_code == 200:
-                                data = resp.json()
-                                if data and isinstance(data, list):
-                                    for item in data:
-                                        code = item.get('code', '')
-                                        name = item.get('name', '')
-                                        
-                                        if keyword in code or keyword in name:
-                                            stocks.append({
-                                                "代码": code,
-                                                "名称": name,
-                                                "最新价": float(item.get('trade', 0) or 0),
-                                                "涨跌幅": float(item.get('changepercent', 0) or 0),
-                                                "成交量": int(float(item.get('volume', 0) or 0))
-                                            })
-                        except:
-                            pass
-                        
-                        if len(stocks) >= 20:
-                            break
-                    if len(stocks) >= 20:
-                        break
-                        
-        except Exception as e:
-            print(f"[新浪A股列表API] 搜索失败: {e}")
-        
-        if stocks:
-            seen = set()
-            unique_stocks = []
-            for s in stocks:
-                if s['代码'] not in seen:
-                    seen.add(s['代码'])
-                    unique_stocks.append(s)
-            return pd.DataFrame(unique_stocks[:20])
-        
-        # 4. 最终备用：预定义股票搜索
-        all_common = []
-        for codes in DataService.INDUSTRY_STOCKS.values():
-            all_common.extend(codes)
-        all_common = list(set(all_common))
-        
-        data = await DataService._fetch_sina_data(all_common)
-        if data:
-            results = []
-            for code, info in data.items():
-                name = info.get('名称', '')
-                if keyword in code or keyword in name:
-                    results.append({"代码": code, **info})
-            return pd.DataFrame(results)
         
         return pd.DataFrame()

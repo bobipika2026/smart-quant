@@ -47,9 +47,14 @@
         <n-descriptions-item label="最终市值">
           ¥{{ result.final_value?.toLocaleString() }}
         </n-descriptions-item>
-        <n-descriptions-item label="总收益率">
+        <n-descriptions-item label="策略收益">
           <n-tag :type="result.total_return >= 0 ? 'success' : 'error'">
             {{ result.total_return }}%
+          </n-tag>
+        </n-descriptions-item>
+        <n-descriptions-item label="基准收益">
+          <n-tag :type="result.benchmark_return >= 0 ? 'success' : 'error'">
+            {{ result.benchmark_return }}%
           </n-tag>
         </n-descriptions-item>
         <n-descriptions-item label="年化收益">
@@ -66,17 +71,34 @@
         <n-descriptions-item label="胜率">
           {{ result.win_rate }}%
         </n-descriptions-item>
-        <n-descriptions-item label="交易次数">
-          {{ result.trade_count }}次
-        </n-descriptions-item>
       </n-descriptions>
+    </n-card>
+
+    <n-card v-if="result?.equity_curve" title="收益曲线" style="margin-top: 16px">
+      <v-chart :option="chartOption" style="height: 400px" autoresize />
+    </n-card>
+
+    <n-card v-if="result?.trades?.length" title="交易记录" style="margin-top: 16px">
+      <n-data-table
+        :columns="tradeColumns"
+        :data="result.trades"
+        :pagination="{ pageSize: 10 }"
+        size="small"
+      />
     </n-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { use } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
+import { LineChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
+import VChart from 'vue-echarts'
 import axios from 'axios'
+
+use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
 const running = ref(false)
 const result = ref<any>(null)
@@ -93,6 +115,60 @@ const form = ref({
 const strategyOptions = computed(() =>
   strategies.value.map(s => ({ label: s.name, value: s.id }))
 )
+
+const chartOption = computed(() => {
+  if (!result.value?.equity_curve) return {}
+  
+  const data = result.value.equity_curve
+  const dates = data.map((d: any) => d.date)
+  const equity = data.map((d: any) => d.equity)
+  
+  // 计算基准（买入持有）
+  const initialEquity = equity[0]
+  const benchmark = data.map((d: any, i: number) => {
+    if (i === 0) return initialEquity
+    const priceChange = d.price / data[0].price
+    return Math.round(initialEquity * priceChange * 100) / 100
+  })
+  
+  return {
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['策略市值', '基准市值'] },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: { type: 'category', data: dates },
+    yAxis: { type: 'value', name: '市值(元)' },
+    series: [
+      {
+        name: '策略市值',
+        type: 'line',
+        data: equity,
+        smooth: true,
+        lineStyle: { width: 2 },
+        areaStyle: { opacity: 0.1 }
+      },
+      {
+        name: '基准市值',
+        type: 'line',
+        data: benchmark,
+        smooth: true,
+        lineStyle: { width: 2, type: 'dashed' },
+        itemStyle: { opacity: 0.5 }
+      }
+    ]
+  }
+})
+
+const tradeColumns = [
+  { title: '日期', key: 'date' },
+  { 
+    title: '类型', 
+    key: 'type',
+    render: (row: any) => row.type === 'buy' ? '买入' : '卖出'
+  },
+  { title: '价格', key: 'price' },
+  { title: '数量', key: 'shares' },
+  { title: '金额', key: 'value' }
+]
 
 const runBacktest = async () => {
   running.value = true
