@@ -1,5 +1,5 @@
 """
-数据服务 - 使用 AkShare + 新浪财经API
+数据服务 - 使用 AkShare + 新浪财经API + Tushare Pro
 支持实时行情、历史数据、股票搜索
 """
 import httpx
@@ -10,6 +10,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 import asyncio
 import akshare as ak
+from app.config import settings
 
 
 class DataService:
@@ -239,7 +240,7 @@ class DataService:
         end_date: str = None,
         adjust: str = "qfq"
     ) -> pd.DataFrame:
-        """获取股票历史数据 - 优先使用 AkShare"""
+        """获取股票历史数据 - 优先级: Tushare Pro > AkShare > 新浪API"""
         # 计算日期范围
         if not end_date:
             end_date = datetime.now().strftime("%Y%m%d")
@@ -247,11 +248,45 @@ class DataService:
             end_date = end_date.replace("-", "")
         
         if not start_date:
-            start_date = (datetime.now() - timedelta(days=365*5)).strftime("%Y%m%d")  # 默认5年
+            start_date = (datetime.now() - timedelta(days=365*5)).strftime("%Y%m%d")
         else:
             start_date = start_date.replace("-", "")
         
-        # 1. 优先使用 AkShare (支持更长时间)
+        # 1. 优先使用 Tushare Pro（如果配置了 token）
+        if settings.TUSHARE_TOKEN:
+            try:
+                import tushare as ts
+                ts.set_token(settings.TUSHARE_TOKEN)
+                pro = ts.pro_api()
+                
+                # 转换代码格式: 000001 -> 000001.SZ
+                ts_code = f"{code}.SZ" if code.startswith("0") or code.startswith("3") else f"{code}.SH"
+                
+                df = await asyncio.to_thread(
+                    pro.daily,
+                    ts_code=ts_code,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                
+                if df is not None and len(df) > 0:
+                    df = df.rename(columns={
+                        'trade_date': '日期',
+                        'open': '开盘',
+                        'close': '收盘',
+                        'high': '最高',
+                        'low': '最低',
+                        'vol': '成交量',
+                        'amount': '成交额'
+                    })
+                    df['日期'] = pd.to_datetime(df['日期']).dt.strftime('%Y-%m-%d')
+                    df = df.sort_values('日期')
+                    print(f"[Tushare Pro] 获取历史数据成功: {code}, {len(df)}条")
+                    return df[['日期', '开盘', '收盘', '最高', '最低', '成交量']]
+            except Exception as e:
+                print(f"[Tushare Pro] 获取历史数据失败: {e}")
+        
+        # 2. 使用 AkShare
         try:
             df = await asyncio.to_thread(
                 ak.stock_zh_a_hist,
@@ -263,26 +298,12 @@ class DataService:
             )
             
             if df is not None and len(df) > 0:
-                # 统一列名
-                df = df.rename(columns={
-                    '日期': '日期',
-                    '开盘': '开盘',
-                    '收盘': '收盘',
-                    '最高': '最高',
-                    '最低': '最低',
-                    '成交量': '成交量',
-                    '成交额': '成交额',
-                    '振幅': '振幅',
-                    '涨跌幅': '涨跌幅',
-                    '涨跌额': '涨跌额',
-                    '换手率': '换手率'
-                })
                 print(f"[AkShare] 获取历史数据成功: {code}, {len(df)}条")
                 return df
         except Exception as e:
             print(f"[AkShare] 获取历史数据失败: {e}")
         
-        # 2. 降级使用新浪财经API
+        # 3. 降级使用新浪财经API
         market = "sh" if code.startswith("6") else "sz"
         
         start_dt = datetime.strptime(start_date, "%Y%m%d")
@@ -327,7 +348,7 @@ class DataService:
         except Exception as e:
             print(f"[新浪API] 获取历史数据失败: {e}")
         
-        # 3. 最终备用：生成模拟数据
+        # 4. 最终备用：生成模拟数据
         print(f"[数据] 使用模拟历史数据: {code}")
         np.random.seed(hash(code) % 2**32)
         dates = pd.date_range(start=start_dt, periods=100, freq="D")
