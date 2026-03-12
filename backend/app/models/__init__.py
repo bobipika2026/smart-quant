@@ -34,6 +34,19 @@ class Stock(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class MonitorConfig(Base):
+    """监控配置模型 - 股票+策略组合"""
+    __tablename__ = "monitor_configs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    stock_code = Column(String(10), nullable=False)
+    stock_name = Column(String(50))
+    strategy_id = Column(String(50), nullable=False)  # ma_cross, macd, kdj
+    strategy_name = Column(String(100))
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class Signal(Base):
     """信号模型"""
     __tablename__ = "signals"

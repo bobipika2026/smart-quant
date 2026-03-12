@@ -1,38 +1,31 @@
 <template>
   <div class="monitor">
-    <n-card title="添加监控">
-      <n-input-group>
-        <n-input 
-          v-model:value="newStock" 
-          placeholder="输入股票代码，如：000001" 
-          style="width: 200px"
-          @keyup.enter="addStock"
-        />
-        <n-button type="primary" :loading="adding" @click="addStock">
-          添加监控
-        </n-button>
-      </n-input-group>
+    <n-card title="监控配置">
+      <n-alert type="info" style="margin-bottom: 16px">
+        从回测页面添加股票+策略组合，系统将监控特定策略的信号。
+      </n-alert>
     </n-card>
 
     <n-card title="监控列表" style="margin-top: 16px">
       <template #header-extra>
-        <n-space>
-          <n-button size="small" @click="loadMonitors">
-            刷新行情
-          </n-button>
-          <n-button size="small" type="primary" @click="checkSignals">
-            检测信号
-          </n-button>
-        </n-space>
+        <n-button size="small" @click="loadMonitors">
+          刷新行情
+        </n-button>
       </template>
 
       <n-spin :show="loading">
-        <n-empty v-if="monitors.length === 0" description="暂无监控股票，添加股票开始监控" />
+        <n-empty v-if="monitors.length === 0" description="暂无监控配置，请从回测页面添加" />
         <n-data-table v-else :columns="columns" :data="monitors" :bordered="false" />
       </n-spin>
     </n-card>
 
     <n-card title="最近信号" style="margin-top: 16px">
+      <template #header-extra>
+        <n-button type="primary" size="small" @click="checkSignals" :loading="checkingSignals">
+          检测信号
+        </n-button>
+      </template>
+      
       <n-spin :show="loadingSignals">
         <n-empty v-if="signals.length === 0" description="暂无交易信号" />
         <n-list v-else bordered>
@@ -68,16 +61,16 @@ import { ref, onMounted, h } from 'vue'
 import { NButton, NTag } from 'naive-ui'
 import axios from 'axios'
 
-const newStock = ref('')
-const adding = ref(false)
 const loading = ref(false)
 const loadingSignals = ref(false)
+const checkingSignals = ref(false)
 const monitors = ref<any[]>([])
 const signals = ref<any[]>([])
 
 const columns = [
-  { title: '代码', key: 'code', width: 100 },
-  { title: '名称', key: 'name', width: 120 },
+  { title: '股票代码', key: 'stock_code', width: 100 },
+  { title: '股票名称', key: 'stock_name', width: 120 },
+  { title: '策略', key: 'strategy_name', width: 100 },
   { 
     title: '最新价', 
     key: 'price',
@@ -94,7 +87,6 @@ const columns = [
       return h('span', { style: { color } }, `${row.change >= 0 ? '+' : ''}${row.change}%`)
     }
   },
-  { title: '交易所', key: 'exchange', width: 80 },
   {
     title: '操作',
     key: 'actions',
@@ -102,7 +94,7 @@ const columns = [
     render: (row: any) => h(NButton, {
       size: 'small',
       type: 'error',
-      onClick: () => removeStock(row.code)
+      onClick: () => removeConfig(row.id)
     }, { default: () => '移除' })
   }
 ]
@@ -119,24 +111,9 @@ const loadMonitors = async () => {
   }
 }
 
-const addStock = async () => {
-  if (!newStock.value.trim()) return
-  
-  adding.value = true
+const removeConfig = async (id: number) => {
   try {
-    const res = await axios.post('/api/monitor/add', { code: newStock.value.trim() })
-    newStock.value = ''
-    await loadMonitors()
-  } catch (e: any) {
-    alert(e.response?.data?.detail || '添加失败')
-  } finally {
-    adding.value = false
-  }
-}
-
-const removeStock = async (code: string) => {
-  try {
-    await axios.post('/api/monitor/remove', { code })
+    await axios.post(`/api/monitor/remove-config/${id}`)
     await loadMonitors()
   } catch (e: any) {
     alert(e.response?.data?.detail || '移除失败')
@@ -144,19 +121,19 @@ const removeStock = async (code: string) => {
 }
 
 const checkSignals = async () => {
-  loadingSignals.value = true
+  checkingSignals.value = true
   try {
     const res = await axios.post('/api/monitor/check-signals')
+    await loadSignals()
     if (res.data.signals?.length > 0) {
       alert(res.data.message)
     } else {
       alert('暂无新信号')
     }
-    await loadSignals()
   } catch (e: any) {
     console.error('检测信号失败', e)
   } finally {
-    loadingSignals.value = false
+    checkingSignals.value = false
   }
 }
 

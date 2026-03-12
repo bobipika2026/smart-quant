@@ -40,6 +40,12 @@
     </n-card>
 
     <n-card v-if="result" title="回测结果" style="margin-top: 16px">
+      <template #header-extra>
+        <n-button type="success" @click="addToMonitor" :loading="addingMonitor">
+          📡 添加到监控
+        </n-button>
+      </template>
+      
       <n-descriptions :column="4" bordered>
         <n-descriptions-item label="初始资金">
           ¥{{ result.initial_capital?.toLocaleString() }}
@@ -101,6 +107,7 @@ import axios from 'axios'
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
 const running = ref(false)
+const addingMonitor = ref(false)
 const result = ref<any>(null)
 const strategies = ref<any[]>([])
 
@@ -123,7 +130,6 @@ const chartOption = computed(() => {
   const dates = data.map((d: any) => d.date)
   const equity = data.map((d: any) => d.equity)
   
-  // 计算基准（买入持有）
   const initialEquity = equity[0]
   const benchmark = data.map((d: any, i: number) => {
     if (i === 0) return initialEquity
@@ -181,11 +187,45 @@ const runBacktest = async () => {
       initial_capital: form.value.initialCapital
     })
     result.value = res.data
+    result.value.stockCode = form.value.stockCode
+    result.value.strategyId = form.value.strategyId
   } catch (e: any) {
     console.error('回测失败', e)
     alert(e.response?.data?.detail || '回测失败')
   } finally {
     running.value = false
+  }
+}
+
+const addToMonitor = async () => {
+  if (!result.value) return
+  
+  // 获取股票名称
+  let stockName = form.value.stockCode
+  try {
+    const res = await axios.get(`/api/stock/info/${form.value.stockCode}`)
+    stockName = res.data.info?.名称 || form.value.stockCode
+  } catch (e) {
+    // ignore
+  }
+  
+  // 获取策略名称
+  const strategy = strategies.value.find(s => s.id === form.value.strategyId)
+  const strategyName = strategy?.name || form.value.strategyId
+  
+  addingMonitor.value = true
+  try {
+    const res = await axios.post('/api/monitor/add-config', {
+      stock_code: form.value.stockCode,
+      stock_name: stockName,
+      strategy_id: form.value.strategyId,
+      strategy_name: strategyName
+    })
+    alert(res.data.message)
+  } catch (e: any) {
+    alert(e.response?.data?.detail || '添加失败')
+  } finally {
+    addingMonitor.value = false
   }
 }
 
