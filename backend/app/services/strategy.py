@@ -913,6 +913,286 @@ class StochasticStrategy(BaseStrategy):
         return df
 
 
+class TRIXStrategy(BaseStrategy):
+    """TRIX三重指数平滑策略"""
+    
+    def __init__(self, period: int = 14):
+        super().__init__(
+            name="TRIX策略",
+            params={"period": period}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 14)
+        
+        # 计算TRIX
+        ema1 = df[close_col].ewm(span=period).mean()
+        ema2 = ema1.ewm(span=period).mean()
+        ema3 = ema2.ewm(span=period).mean()
+        
+        df['trix'] = (ema3 - ema3.shift(1)) / ema3.shift(1) * 100
+        df['trix_signal'] = df['trix'].ewm(span=period).mean()
+        
+        # 生成信号
+        df['signal'] = 0
+        # TRIX上穿信号线，买入
+        df.loc[(df['trix'] > df['trix_signal']) & 
+               (df['trix'].shift(1) <= df['trix_signal'].shift(1)), 'signal'] = 1
+        # TRIX下穿信号线，卖出
+        df.loc[(df['trix'] < df['trix_signal']) & 
+               (df['trix'].shift(1) >= df['trix_signal'].shift(1)), 'signal'] = -1
+        
+        return df
+
+
+class ADXStrategy(BaseStrategy):
+    """ADX平均趋向指数策略"""
+    
+    def __init__(self, period: int = 14, threshold: float = 25):
+        super().__init__(
+            name="ADX策略",
+            params={"period": period, "threshold": threshold}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 14)
+        threshold = self.params.get('threshold', 25)
+        
+        # 计算+DM和-DM
+        df['up_move'] = df[high_col] - df[high_col].shift(1)
+        df['down_move'] = df[low_col].shift(1) - df[low_col]
+        
+        df['plus_dm'] = np.where((df['up_move'] > df['down_move']) & (df['up_move'] > 0), df['up_move'], 0)
+        df['minus_dm'] = np.where((df['down_move'] > df['up_move']) & (df['down_move'] > 0), df['down_move'], 0)
+        
+        # 计算TR
+        df['tr'] = np.maximum(
+            df[high_col] - df[low_col],
+            np.maximum(
+                np.abs(df[high_col] - df[close_col].shift(1)),
+                np.abs(df[low_col] - df[close_col].shift(1))
+            )
+        )
+        
+        # 平滑处理
+        atr = df['tr'].rolling(window=period).mean()
+        plus_di = 100 * df['plus_dm'].rolling(window=period).mean() / atr
+        minus_di = 100 * df['minus_dm'].rolling(window=period).mean() / atr
+        
+        # 计算DX和ADX
+        dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+        df['adx'] = dx.rolling(window=period).mean()
+        df['plus_di'] = plus_di
+        df['minus_di'] = minus_di
+        
+        # 生成信号
+        df['signal'] = 0
+        # ADX大于阈值且+DI>-DI，买入
+        df.loc[(df['adx'] > threshold) & (df['plus_di'] > df['minus_di']), 'signal'] = 1
+        # ADX大于阈值且-DI>+DI，卖出
+        df.loc[(df['adx'] > threshold) & (df['minus_di'] > df['plus_di']), 'signal'] = -1
+        
+        return df
+
+
+class BBIStrategy(BaseStrategy):
+    """BBI多空指标策略"""
+    
+    def __init__(self, periods: str = "3,6,12,24"):
+        super().__init__(
+            name="BBI策略",
+            params={"periods": periods}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        close_col = col_map.get('close', '收盘')
+        
+        periods = [int(p) for p in self.params.get('periods', "3,6,12,24").split(',')]
+        
+        # 计算BBI
+        ma_sum = sum(df[close_col].rolling(window=p).mean() for p in periods)
+        df['bbi'] = ma_sum / len(periods)
+        
+        # 生成信号
+        df['signal'] = 0
+        # 价格上穿BBI，买入
+        df.loc[(df[close_col] > df['bbi']) & (df[close_col].shift(1) <= df['bbi'].shift(1)), 'signal'] = 1
+        # 价格下穿BBI，卖出
+        df.loc[(df[close_col] < df['bbi']) & (df[close_col].shift(1) >= df['bbi'].shift(1)), 'signal'] = -1
+        
+        return df
+
+
+class EXPMAtrategy(BaseStrategy):
+    """EXPMA指数平均数策略"""
+    
+    def __init__(self, short_period: int = 12, long_period: int = 50):
+        super().__init__(
+            name="EXPMA策略",
+            params={"short_period": short_period, "long_period": long_period}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        close_col = col_map.get('close', '收盘')
+        
+        short_period = self.params.get('short_period', 12)
+        long_period = self.params.get('long_period', 50)
+        
+        # 计算EXPMA
+        df['expma_short'] = df[close_col].ewm(span=short_period).mean()
+        df['expma_long'] = df[close_col].ewm(span=long_period).mean()
+        
+        # 生成信号
+        df['signal'] = 0
+        # 短期EXPMA上穿长期EXPMA，买入
+        df.loc[(df['expma_short'] > df['expma_long']) & 
+               (df['expma_short'].shift(1) <= df['expma_long'].shift(1)), 'signal'] = 1
+        # 短期EXPMA下穿长期EXPMA，卖出
+        df.loc[(df['expma_short'] < df['expma_long']) & 
+               (df['expma_short'].shift(1) >= df['expma_long'].shift(1)), 'signal'] = -1
+        
+        return df
+
+
+class IchimokuStrategy(BaseStrategy):
+    """一目均衡表策略"""
+    
+    def __init__(self, tenkan: int = 9, kijun: int = 26, senkou: int = 52):
+        super().__init__(
+            name="一目均衡表",
+            params={"tenkan": tenkan, "kijun": kijun, "senkou": senkou}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        tenkan = self.params.get('tenkan', 9)
+        kijun = self.params.get('kijun', 26)
+        
+        # 计算转换线
+        tenkan_high = df[high_col].rolling(window=tenkan).max()
+        tenkan_low = df[low_col].rolling(window=tenkan).min()
+        df['tenkan'] = (tenkan_high + tenkan_low) / 2
+        
+        # 计算基准线
+        kijun_high = df[high_col].rolling(window=kijun).max()
+        kijun_low = df[low_col].rolling(window=kijun).min()
+        df['kijun'] = (kijun_high + kijun_low) / 2
+        
+        # 生成信号
+        df['signal'] = 0
+        # 价格上穿转换线和基准线，买入
+        df.loc[(df[close_col] > df['tenkan']) & (df[close_col] > df['kijun']), 'signal'] = 1
+        # 价格下穿转换线和基准线，卖出
+        df.loc[(df[close_col] < df['tenkan']) & (df[close_col] < df['kijun']), 'signal'] = -1
+        
+        return df
+
+
+class ZigZagStrategy(BaseStrategy):
+    """ZigZag之字形策略"""
+    
+    def __init__(self, threshold: float = 5.0):
+        super().__init__(
+            name="ZigZag策略",
+            params={"threshold": threshold}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        close_col = col_map.get('close', '收盘')
+        
+        threshold = self.params.get('threshold', 5.0)
+        
+        # 简化版ZigZag
+        df['change'] = df[close_col].pct_change() * 100
+        
+        # 计算累积变化
+        df['zigzag'] = 0
+        trend = 0
+        for i in range(1, len(df)):
+            if df['change'].iloc[i] > threshold:
+                trend = 1
+            elif df['change'].iloc[i] < -threshold:
+                trend = -1
+            
+            if trend == 1:
+                df.loc[df.index[i], 'zigzag'] = 1
+            elif trend == -1:
+                df.loc[df.index[i], 'zigzag'] = -1
+            else:
+                df.loc[df.index[i], 'zigzag'] = df['zigzag'].iloc[i-1]
+        
+        # 生成信号
+        df['signal'] = 0
+        df.loc[df['zigzag'] == 1, 'signal'] = 1
+        df.loc[df['zigzag'] == -1, 'signal'] = -1
+        
+        return df
+
+
+class DEMAStrategy(BaseStrategy):
+    """DEMA双指数移动平均策略"""
+    
+    def __init__(self, short_period: int = 10, long_period: int = 30):
+        super().__init__(
+            name="DEMA策略",
+            params={"short_period": short_period, "long_period": long_period}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        close_col = col_map.get('close', '收盘')
+        
+        short_period = self.params.get('short_period', 10)
+        long_period = self.params.get('long_period', 30)
+        
+        # 计算DEMA
+        def dema(data, period):
+            ema1 = data.ewm(span=period).mean()
+            ema2 = ema1.ewm(span=period).mean()
+            return 2 * ema1 - ema2
+        
+        df['dema_short'] = dema(df[close_col], short_period)
+        df['dema_long'] = dema(df[close_col], long_period)
+        
+        # 生成信号
+        df['signal'] = 0
+        df.loc[(df['dema_short'] > df['dema_long']) & 
+               (df['dema_short'].shift(1) <= df['dema_long'].shift(1)), 'signal'] = 1
+        df.loc[(df['dema_short'] < df['dema_long']) & 
+               (df['dema_short'].shift(1) >= df['dema_long'].shift(1)), 'signal'] = -1
+        
+        return df
+
+
 # 策略注册表
 STRATEGY_REGISTRY = {
     "ma_cross": MAStrategy,
@@ -936,6 +1216,13 @@ STRATEGY_REGISTRY = {
     "keltner": KeltnerStrategy,
     "mfi": MFIStrategy,
     "stochastic": StochasticStrategy,
+    "trix": TRIXStrategy,
+    "adx": ADXStrategy,
+    "bbi": BBIStrategy,
+    "expma": EXPMAtrategy,
+    "ichimoku": IchimokuStrategy,
+    "zigzag": ZigZagStrategy,
+    "dema": DEMAStrategy,
 }
 
 
