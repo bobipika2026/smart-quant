@@ -223,6 +223,16 @@ const chartOption = computed(() => {
     }
   })
   
+  // 计算纵轴范围（基于市值数据）
+  const allValues = [...equity, ...benchmark].filter(v => v > 0)
+  const minValue = Math.min(...allValues)
+  const maxValue = Math.max(...allValues)
+  
+  // 计算合适的范围（上下留10%空间）
+  const range = maxValue - minValue
+  const yMin = Math.max(0, Math.floor((minValue - range * 0.1) / 1000) * 1000)
+  const yMax = Math.ceil((maxValue + range * 0.1) / 1000) * 1000
+  
   return {
     tooltip: { 
       trigger: 'axis',
@@ -245,7 +255,21 @@ const chartOption = computed(() => {
     },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { type: 'category', data: dates },
-    yAxis: { type: 'value', name: '市值(元)' },
+    yAxis: { 
+      type: 'value', 
+      name: '市值(元)',
+      min: yMin,
+      max: yMax,
+      splitNumber: 5,
+      axisLabel: {
+        formatter: (value: number) => {
+          if (value >= 10000) {
+            return (value / 10000).toFixed(1) + '万'
+          }
+          return value.toString()
+        }
+      }
+    },
     series: [
       {
         name: '策略市值',
