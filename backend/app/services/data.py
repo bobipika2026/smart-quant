@@ -246,7 +246,12 @@ class DataService:
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
         if not start_date:
-            start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=365*3)).strftime("%Y-%m-%d")  # 默认3年
+        
+        # 计算需要多少天的数据
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        days_needed = (end_dt - start_dt).days + 30  # 多取30天确保足够
         
         try:
             # 尝试从新浪获取历史数据
@@ -255,10 +260,10 @@ class DataService:
                 "symbol": f"{market}{code}",
                 "scale": "240",
                 "ma": "no",
-                "datalen": "365"
+                "datalen": str(min(days_needed, 1000))  # 新浪API限制最多约1000条
             }
             
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(url, params=params)
                 
             if resp.status_code == 200:
@@ -279,6 +284,12 @@ class DataService:
                         for col in ['开盘', '收盘', '最高', '最低', '成交量']:
                             if col in df.columns:
                                 df[col] = pd.to_numeric(df[col], errors='coerce')
+                        
+                        # 过滤日期范围
+                        df['日期_dt'] = pd.to_datetime(df['日期'])
+                        df = df[(df['日期_dt'] >= start_dt) & (df['日期_dt'] <= end_dt)]
+                        df = df.drop(columns=['日期_dt'])
+                        
                         return df
         except Exception as e:
             print(f"[新浪API] 获取历史数据失败: {e}")
