@@ -23,6 +23,19 @@
               <n-date-picker v-model:value="form.endDate" type="date" />
             </n-form-item>
           </n-gi>
+          <n-gi :span="2">
+            <n-form-item label="时间范围">
+              <n-space>
+                <n-button size="small" @click="setTimeRange(1)">1年</n-button>
+                <n-button size="small" @click="setTimeRange(3)">3年</n-button>
+                <n-button size="small" type="primary" @click="setTimeRange(5)">5年</n-button>
+                <n-button size="small" @click="setTimeRange(10)">10年</n-button>
+                <n-text depth="3" style="margin-left: 8px">
+                  ({{ yearsText }}年)
+                </n-text>
+              </n-space>
+            </n-form-item>
+          </n-gi>
           <n-gi>
             <n-form-item label="初始资金">
               <n-input-number v-model:value="form.initialCapital" :min="10000" :step="10000">
@@ -175,10 +188,22 @@ const strategies = ref<any[]>([])
 const form = ref({
   stockCode: '000001',
   strategyId: 'ma_cross',
-  startDate: Date.now() - 365 * 24 * 60 * 60 * 1000,
+  startDate: Date.now() - 365 * 5 * 24 * 60 * 60 * 1000, // 默认5年
   endDate: Date.now(),
   initialCapital: 100000
 })
+
+// 计算当前选择的时间范围（年数）
+const yearsText = computed(() => {
+  const days = (form.value.endDate - form.value.startDate) / (24 * 60 * 60 * 1000)
+  return (days / 365).toFixed(1)
+})
+
+// 设置时间范围快捷按钮
+const setTimeRange = (years: number) => {
+  form.value.endDate = Date.now()
+  form.value.startDate = Date.now() - years * 365 * 24 * 60 * 60 * 1000
+}
 
 const strategyOptions = computed(() =>
   strategies.value.map(s => ({ label: s.name, value: s.id }))
