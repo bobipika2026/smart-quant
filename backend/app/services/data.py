@@ -1,5 +1,5 @@
 """
-数据服务 - 使用新浪财经API
+数据服务 - 使用 AkShare + 新浪财经API
 支持实时行情、历史数据、股票搜索
 """
 import httpx
@@ -9,6 +9,7 @@ import re
 from typing import List, Optional
 from datetime import datetime, timedelta
 import asyncio
+import akshare as ak
 
 
 class DataService:
@@ -238,36 +239,69 @@ class DataService:
         end_date: str = None,
         adjust: str = "qfq"
     ) -> pd.DataFrame:
-        """获取股票历史数据"""
-        # 新浪财经历史数据URL
-        market = "sh" if code.startswith("6") else "sz"
-        
+        """获取股票历史数据 - 优先使用 AkShare"""
         # 计算日期范围
         if not end_date:
-            end_date = datetime.now().strftime("%Y-%m-%d")
-        if not start_date:
-            start_date = (datetime.now() - timedelta(days=365*3)).strftime("%Y-%m-%d")  # 默认3年
+            end_date = datetime.now().strftime("%Y%m%d")
+        else:
+            end_date = end_date.replace("-", "")
         
-        # 计算需要多少天的数据
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        days_needed = (end_dt - start_dt).days + 30  # 多取30天确保足够
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=365*5)).strftime("%Y%m%d")  # 默认5年
+        else:
+            start_date = start_date.replace("-", "")
+        
+        # 1. 优先使用 AkShare (支持更长时间)
+        try:
+            df = await asyncio.to_thread(
+                ak.stock_zh_a_hist,
+                symbol=code,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust
+            )
+            
+            if df is not None and len(df) > 0:
+                # 统一列名
+                df = df.rename(columns={
+                    '日期': '日期',
+                    '开盘': '开盘',
+                    '收盘': '收盘',
+                    '最高': '最高',
+                    '最低': '最低',
+                    '成交量': '成交量',
+                    '成交额': '成交额',
+                    '振幅': '振幅',
+                    '涨跌幅': '涨跌幅',
+                    '涨跌额': '涨跌额',
+                    '换手率': '换手率'
+                })
+                print(f"[AkShare] 获取历史数据成功: {code}, {len(df)}条")
+                return df
+        except Exception as e:
+            print(f"[AkShare] 获取历史数据失败: {e}")
+        
+        # 2. 降级使用新浪财经API
+        market = "sh" if code.startswith("6") else "sz"
+        
+        start_dt = datetime.strptime(start_date, "%Y%m%d")
+        end_dt = datetime.strptime(end_date, "%Y%m%d")
+        days_needed = (end_dt - start_dt).days + 30
         
         try:
-            # 尝试从新浪获取历史数据
             url = f"https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData"
             params = {
                 "symbol": f"{market}{code}",
                 "scale": "240",
                 "ma": "no",
-                "datalen": str(min(days_needed, 1000))  # 新浪API限制最多约1000条
+                "datalen": str(min(days_needed, 1000))
             }
             
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(url, params=params)
                 
             if resp.status_code == 200:
-                import json
                 data = resp.json()
                 if data and isinstance(data, list):
                     df = pd.DataFrame(data)
@@ -280,24 +314,23 @@ class DataService:
                             'low': '最低',
                             'volume': '成交量'
                         })
-                        # 转换数据类型
                         for col in ['开盘', '收盘', '最高', '最低', '成交量']:
                             if col in df.columns:
                                 df[col] = pd.to_numeric(df[col], errors='coerce')
                         
-                        # 过滤日期范围
                         df['日期_dt'] = pd.to_datetime(df['日期'])
                         df = df[(df['日期_dt'] >= start_dt) & (df['日期_dt'] <= end_dt)]
                         df = df.drop(columns=['日期_dt'])
                         
+                        print(f"[新浪API] 获取历史数据成功: {code}, {len(df)}条")
                         return df
         except Exception as e:
             print(f"[新浪API] 获取历史数据失败: {e}")
         
-        # 如果API失败，生成模拟数据
+        # 3. 最终备用：生成模拟数据
         print(f"[数据] 使用模拟历史数据: {code}")
         np.random.seed(hash(code) % 2**32)
-        dates = pd.date_range(start=start_date, periods=100, freq="D")
+        dates = pd.date_range(start=start_dt, periods=100, freq="D")
         base_price = np.random.uniform(10, 100)
         prices = base_price + np.cumsum(np.random.randn(100) * 0.02 * base_price)
         prices = np.maximum(prices, 1)
