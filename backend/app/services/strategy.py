@@ -299,6 +299,222 @@ class VolumePriceStrategy(BaseStrategy):
         return df
 
 
+class CCIStrategy(BaseStrategy):
+    """CCI顺势指标策略"""
+    
+    def __init__(self, period: int = 14, oversold: float = -100, overbought: float = 100):
+        super().__init__(
+            name="CCI策略",
+            params={"period": period, "oversold": oversold, "overbought": overbought}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 14)
+        oversold = self.params.get('oversold', -100)
+        overbought = self.params.get('overbought', 100)
+        
+        # 计算CCI
+        tp = (df[high_col] + df[low_col] + df[close_col]) / 3
+        ma_tp = tp.rolling(window=period).mean()
+        md = tp.rolling(window=period).apply(lambda x: np.abs(x - x.mean()).mean())
+        
+        df['cci'] = (tp - ma_tp) / (0.015 * md)
+        
+        # 生成信号
+        df['signal'] = 0
+        # CCI低于-100，超卖买入
+        df.loc[df['cci'] < oversold, 'signal'] = 1
+        # CCI高于+100，超买卖出
+        df.loc[df['cci'] > overbought, 'signal'] = -1
+        
+        # CCI从下往上穿越-100，更强买入
+        df.loc[
+            (df['cci'] > oversold) & (df['cci'].shift(1) <= oversold), 
+            'signal'
+        ] = 1
+        # CCI从上往下穿越+100，更强卖出
+        df.loc[
+            (df['cci'] < overbought) & (df['cci'].shift(1) >= overbought), 
+            'signal'
+        ] = -1
+        
+        return df
+
+
+class WRStrategy(BaseStrategy):
+    """威廉指标策略"""
+    
+    def __init__(self, period: int = 14, oversold: float = -80, overbought: float = -20):
+        super().__init__(
+            name="WR策略",
+            params={"period": period, "oversold": oversold, "overbought": overbought}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 14)
+        oversold = self.params.get('oversold', -80)
+        overbought = self.params.get('overbought', -20)
+        
+        # 计算威廉指标
+        high_n = df[high_col].rolling(window=period).max()
+        low_n = df[low_col].rolling(window=period).min()
+        
+        df['wr'] = (high_n - df[close_col]) / (high_n - low_n) * -100
+        
+        # 生成信号
+        df['signal'] = 0
+        # WR低于-80，超卖买入
+        df.loc[df['wr'] < oversold, 'signal'] = 1
+        # WR高于-20，超买卖出
+        df.loc[df['wr'] > overbought, 'signal'] = -1
+        
+        return df
+
+
+class OBVStrategy(BaseStrategy):
+    """OBV能量潮策略"""
+    
+    def __init__(self, period: int = 20):
+        super().__init__(
+            name="OBV策略",
+            params={"period": period}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        close_col = col_map.get('close', '收盘')
+        volume_col = col_map.get('volume', '成交量')
+        
+        period = self.params.get('period', 20)
+        
+        # 计算OBV
+        df['obv'] = 0
+        for i in range(1, len(df)):
+            if df[close_col].iloc[i] > df[close_col].iloc[i-1]:
+                df.loc[df.index[i], 'obv'] = df['obv'].iloc[i-1] + df[volume_col].iloc[i]
+            elif df[close_col].iloc[i] < df[close_col].iloc[i-1]:
+                df.loc[df.index[i], 'obv'] = df['obv'].iloc[i-1] - df[volume_col].iloc[i]
+            else:
+                df.loc[df.index[i], 'obv'] = df['obv'].iloc[i-1]
+        
+        # OBV均线
+        df['obv_ma'] = df['obv'].rolling(window=period).mean()
+        
+        # 生成信号
+        df['signal'] = 0
+        # OBV上穿均线，买入
+        df.loc[df['obv'] > df['obv_ma'], 'signal'] = 1
+        # OBV下穿均线，卖出
+        df.loc[df['obv'] < df['obv_ma'], 'signal'] = -1
+        
+        return df
+
+
+class DMIStrategy(BaseStrategy):
+    """DMI动向指标策略"""
+    
+    def __init__(self, period: int = 14, threshold: float = 25):
+        super().__init__(
+            name="DMI策略",
+            params={"period": period, "threshold": threshold}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 14)
+        threshold = self.params.get('threshold', 25)
+        
+        # 计算DMI
+        df['up_move'] = df[high_col] - df[high_col].shift(1)
+        df['down_move'] = df[low_col].shift(1) - df[low_col]
+        
+        df['plus_dm'] = np.where(
+            (df['up_move'] > df['down_move']) & (df['up_move'] > 0),
+            df['up_move'], 0
+        )
+        df['minus_dm'] = np.where(
+            (df['down_move'] > df['up_move']) & (df['down_move'] > 0),
+            df['down_move'], 0
+        )
+        
+        df['plus_di'] = 100 * df['plus_dm'].rolling(window=period).mean() / df[close_col].rolling(window=period).mean()
+        df['minus_di'] = 100 * df['minus_dm'].rolling(window=period).mean() / df[close_col].rolling(window=period).mean()
+        
+        # 生成信号
+        df['signal'] = 0
+        # +DI上穿-DI，且+DI大于阈值，买入
+        df.loc[
+            (df['plus_di'] > df['minus_di']) & 
+            (df['plus_di'].shift(1) <= df['minus_di'].shift(1)) &
+            (df['plus_di'] > threshold),
+            'signal'
+        ] = 1
+        # -DI上穿+DI，且-DI大于阈值，卖出
+        df.loc[
+            (df['minus_di'] > df['plus_di']) & 
+            (df['minus_di'].shift(1) <= df['plus_di'].shift(1)) &
+            (df['minus_di'] > threshold),
+            'signal'
+        ] = -1
+        
+        return df
+
+
+class BSIAStrategy(BaseStrategy):
+    """BIAS乖离率策略"""
+    
+    def __init__(self, period: int = 20, oversold: float = -10, overbought: float = 10):
+        super().__init__(
+            name="BIAS策略",
+            params={"period": period, "oversold": oversold, "overbought": overbought}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 20)
+        oversold = self.params.get('oversold', -10)
+        overbought = self.params.get('overbought', 10)
+        
+        # 计算乖离率
+        ma = df[close_col].rolling(window=period).mean()
+        df['bias'] = (df[close_col] - ma) / ma * 100
+        
+        # 生成信号
+        df['signal'] = 0
+        # 乖离率低于-10%，超卖买入
+        df.loc[df['bias'] < oversold, 'signal'] = 1
+        # 乖离率高于+10%，超买卖出
+        df.loc[df['bias'] > overbought, 'signal'] = -1
+        
+        return df
+
+
 # 策略注册表
 STRATEGY_REGISTRY = {
     "ma_cross": MAStrategy,
@@ -307,6 +523,11 @@ STRATEGY_REGISTRY = {
     "rsi": RSIStrategy,
     "boll": BOLLStrategy,
     "volume_price": VolumePriceStrategy,
+    "cci": CCIStrategy,
+    "wr": WRStrategy,
+    "obv": OBVStrategy,
+    "dmi": DMIStrategy,
+    "bias": BSIAStrategy,
 }
 
 
