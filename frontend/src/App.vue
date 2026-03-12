@@ -7,25 +7,37 @@
           collapse-mode="width"
           :collapsed-width="64"
           :width="200"
-          :collapsed="collapsed"
+          :collapsed="isCollapsed"
           show-trigger
-          @collapse="collapsed = true"
-          @expand="collapsed = false"
+          @collapse="isCollapsed = true"
+          @expand="isCollapsed = false"
+          :mobile="isMobile"
+          :native-scrollbar="false"
         >
           <div class="logo">
-            <span v-if="!collapsed">📊 Smart Quant</span>
+            <span v-if="!isCollapsed">📊 Smart Quant</span>
             <span v-else>📊</span>
           </div>
           <n-menu
-            :collapsed="collapsed"
+            :collapsed="isCollapsed"
             :collapsed-width="64"
             :collapsed-icon-size="22"
             :options="menuOptions"
+            :value="currentMenu"
             @update:value="handleMenuClick"
           />
         </n-layout-sider>
         <n-layout>
           <n-layout-header bordered class="header">
+            <n-button 
+              v-if="isMobile" 
+              quaternary 
+              circle 
+              @click="isCollapsed = !isCollapsed"
+              style="margin-right: 12px"
+            >
+              <template #icon>☰</template>
+            </n-button>
             <h2>{{ pageTitle }}</h2>
           </n-layout-header>
           <n-layout-content class="content">
@@ -38,13 +50,35 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import type { MenuOption } from 'naive-ui'
 
 const router = useRouter()
 const route = useRoute()
-const collapsed = ref(false)
+const isCollapsed = ref(false)
+const windowWidth = ref(window.innerWidth)
+
+const isMobile = computed(() => windowWidth.value < 768)
+const isTablet = computed(() => windowWidth.value >= 768 && windowWidth.value < 1024)
+
+// 监听窗口大小变化
+const handleResize = () => {
+  windowWidth.value = window.innerWidth
+  // 手机端默认折叠侧边栏
+  if (isMobile.value) {
+    isCollapsed.value = true
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('resize', handleResize)
+  handleResize() // 初始化
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
+})
 
 const menuOptions: MenuOption[] = [
   {
@@ -74,6 +108,8 @@ const menuOptions: MenuOption[] = [
   }
 ]
 
+const currentMenu = computed(() => route.name as string)
+
 const pageTitle = computed(() => {
   const titles: Record<string, string> = {
     home: '首页概览',
@@ -87,6 +123,10 @@ const pageTitle = computed(() => {
 
 const handleMenuClick = (key: string) => {
   router.push({ name: key })
+  // 手机端点击菜单后自动折叠
+  if (isMobile.value) {
+    isCollapsed.value = true
+  }
 }
 </script>
 
@@ -108,9 +148,32 @@ const handleMenuClick = (key: string) => {
   align-items: center;
 }
 
+.header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
 .content {
-  padding: 24px;
+  padding: 16px;
   min-height: calc(100vh - 60px);
   background: #f5f7f9;
+}
+
+/* 平板适配 */
+@media (max-width: 1024px) {
+  .content {
+    padding: 12px;
+  }
+}
+
+/* 手机适配 */
+@media (max-width: 768px) {
+  .content {
+    padding: 8px;
+  }
+  
+  .header h2 {
+    font-size: 16px;
+  }
 }
 </style>
