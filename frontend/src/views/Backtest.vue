@@ -159,13 +159,13 @@
 import { ref, onMounted, computed } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { LineChart } from 'echarts/charts'
+import { LineChart, ScatterChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import axios from 'axios'
 import { NRate } from 'naive-ui'
 
-use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
+use([CanvasRenderer, LineChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent])
 
 const running = ref(false)
 const addingMonitor = ref(false)
@@ -198,9 +198,52 @@ const chartOption = computed(() => {
     return Math.round(initialEquity * priceChange * 100) / 100
   })
   
+  // 提取买卖点
+  const trades = result.value.trades || []
+  const buyPoints: any[] = []
+  const sellPoints: any[] = []
+  
+  trades.forEach((trade: any) => {
+    const tradeDate = trade.date
+    const dateIndex = dates.findIndex((d: string) => d === tradeDate || d.startsWith(tradeDate))
+    if (dateIndex >= 0) {
+      if (trade.type === 'buy') {
+        buyPoints.push({
+          name: '买入',
+          value: [tradeDate, equity[dateIndex]],
+          itemStyle: { color: '#18a058' }
+        })
+      } else {
+        sellPoints.push({
+          name: '卖出', 
+          value: [tradeDate, equity[dateIndex]],
+          itemStyle: { color: '#d03050' }
+        })
+      }
+    }
+  })
+  
   return {
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['策略市值', '基准市值'] },
+    tooltip: { 
+      trigger: 'axis',
+      formatter: (params: any) => {
+        let result = params[0].axisValue + '<br/>'
+        params.forEach((item: any) => {
+          if (item.seriesName === '买入点') {
+            result += `<span style="color:#18a058">● 买入点</span><br/>`
+          } else if (item.seriesName === '卖出点') {
+            result += `<span style="color:#d03050">● 卖出点</span><br/>`
+          } else {
+            result += `${item.marker} ${item.seriesName}: ¥${item.value?.toLocaleString()}<br/>`
+          }
+        })
+        return result
+      }
+    },
+    legend: { 
+      data: ['策略市值', '基准市值', '买入点', '卖出点'],
+      selected: { '基准市值': false }
+    },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { type: 'category', data: dates },
     yAxis: { type: 'value', name: '市值(元)' },
@@ -211,7 +254,8 @@ const chartOption = computed(() => {
         data: equity,
         smooth: true,
         lineStyle: { width: 2 },
-        areaStyle: { opacity: 0.1 }
+        areaStyle: { opacity: 0.1 },
+        z: 1
       },
       {
         name: '基准市值',
@@ -219,7 +263,30 @@ const chartOption = computed(() => {
         data: benchmark,
         smooth: true,
         lineStyle: { width: 2, type: 'dashed' },
-        itemStyle: { opacity: 0.5 }
+        itemStyle: { opacity: 0.5 },
+        z: 1
+      },
+      // 买入点标记
+      {
+        name: '买入点',
+        type: 'scatter',
+        data: buyPoints,
+        symbol: 'triangle',
+        symbolSize: 12,
+        symbolRotate: 0,
+        itemStyle: { color: '#18a058' },
+        z: 10
+      },
+      // 卖出点标记
+      {
+        name: '卖出点',
+        type: 'scatter',
+        data: sellPoints,
+        symbol: 'triangle',
+        symbolSize: 12,
+        symbolRotate: 180,
+        itemStyle: { color: '#d03050' },
+        z: 10
       }
     ]
   }
