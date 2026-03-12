@@ -515,6 +515,190 @@ class BSIAStrategy(BaseStrategy):
         return df
 
 
+class ATRStrategy(BaseStrategy):
+    """ATR真实波幅策略"""
+    
+    def __init__(self, period: int = 14, multiplier: float = 2.0):
+        super().__init__(
+            name="ATR策略",
+            params={"period": period, "multiplier": multiplier}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 14)
+        multiplier = self.params.get('multiplier', 2.0)
+        
+        # 计算TR
+        df['tr'] = np.maximum(
+            df[high_col] - df[low_col],
+            np.maximum(
+                np.abs(df[high_col] - df[close_col].shift(1)),
+                np.abs(df[low_col] - df[close_col].shift(1))
+            )
+        )
+        
+        # 计算ATR
+        df['atr'] = df['tr'].rolling(window=period).mean()
+        
+        # 计算上下轨
+        df['upper'] = df[close_col] + multiplier * df['atr']
+        df['lower'] = df[close_col] - multiplier * df['atr']
+        
+        # 生成信号
+        df['signal'] = 0
+        # 价格突破下轨，买入
+        df.loc[df[close_col] < df['lower'], 'signal'] = 1
+        # 价格突破上轨，卖出
+        df.loc[df[close_col] > df['upper'], 'signal'] = -1
+        
+        return df
+
+
+class SARStrategy(BaseStrategy):
+    """SAR抛物线指标策略"""
+    
+    def __init__(self, af_start: float = 0.02, af_increment: float = 0.02, af_max: float = 0.2):
+        super().__init__(
+            name="SAR策略",
+            params={"af_start": af_start, "af_increment": af_increment, "af_max": af_max}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        # 简化版SAR计算
+        df['sar'] = df[close_col].rolling(window=5).mean()
+        
+        # 判断趋势
+        df['trend'] = 0
+        df.loc[df[close_col] > df['sar'], 'trend'] = 1  # 上升趋势
+        df.loc[df[close_col] < df['sar'], 'trend'] = -1  # 下降趋势
+        
+        # 生成信号
+        df['signal'] = 0
+        # 趋势从下降转为上升，买入
+        df.loc[(df['trend'] == 1) & (df['trend'].shift(1) == -1), 'signal'] = 1
+        # 趋势从上升转为下降，卖出
+        df.loc[(df['trend'] == -1) & (df['trend'].shift(1) == 1), 'signal'] = -1
+        
+        return df
+
+
+class AroonStrategy(BaseStrategy):
+    """Aroon阿隆指标策略"""
+    
+    def __init__(self, period: int = 14, threshold: float = 70):
+        super().__init__(
+            name="Aroon策略",
+            params={"period": period, "threshold": threshold}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        
+        period = self.params.get('period', 14)
+        threshold = self.params.get('threshold', 70)
+        
+        # 计算Aroon
+        df['aroon_up'] = df[high_col].rolling(window=period).apply(
+            lambda x: (period - 1 - np.argmax(x)) / (period - 1) * 100, raw=False
+        )
+        df['aroon_down'] = df[low_col].rolling(window=period).apply(
+            lambda x: (period - 1 - np.argmin(x)) / (period - 1) * 100, raw=False
+        )
+        
+        # 生成信号
+        df['signal'] = 0
+        # Aroon-Up上穿Aroon-Down，买入
+        df.loc[(df['aroon_up'] > df['aroon_down']) & 
+               (df['aroon_up'].shift(1) <= df['aroon_down'].shift(1)), 'signal'] = 1
+        # Aroon-Down上穿Aroon-Up，卖出
+        df.loc[(df['aroon_down'] > df['aroon_up']) & 
+               (df['aroon_down'].shift(1) <= df['aroon_up'].shift(1)), 'signal'] = -1
+        
+        return df
+
+
+class MOMStrategy(BaseStrategy):
+    """MOM动量指标策略"""
+    
+    def __init__(self, period: int = 10, oversold: float = -5, overbought: float = 5):
+        super().__init__(
+            name="MOM策略",
+            params={"period": period, "oversold": oversold, "overbought": overbought}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 10)
+        oversold = self.params.get('oversold', -5)
+        overbought = self.params.get('overbought', 5)
+        
+        # 计算动量
+        df['mom'] = df[close_col] - df[close_col].shift(period)
+        
+        # 生成信号
+        df['signal'] = 0
+        # 动量由负转正，买入
+        df.loc[(df['mom'] > 0) & (df['mom'].shift(1) <= 0), 'signal'] = 1
+        # 动量由正转负，卖出
+        df.loc[(df['mom'] < 0) & (df['mom'].shift(1) >= 0), 'signal'] = -1
+        
+        return df
+
+
+class ROCStrategy(BaseStrategy):
+    """ROC变动率指标策略"""
+    
+    def __init__(self, period: int = 12, oversold: float = -10, overbought: float = 10):
+        super().__init__(
+            name="ROC策略",
+            params={"period": period, "oversold": oversold, "overbought": overbought}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 12)
+        oversold = self.params.get('oversold', -10)
+        overbought = self.params.get('overbought', 10)
+        
+        # 计算ROC
+        df['roc'] = (df[close_col] - df[close_col].shift(period)) / df[close_col].shift(period) * 100
+        
+        # 生成信号
+        df['signal'] = 0
+        # ROC低于超卖线，买入
+        df.loc[df['roc'] < oversold, 'signal'] = 1
+        # ROC高于超买线，卖出
+        df.loc[df['roc'] > overbought, 'signal'] = -1
+        
+        return df
+
+
 # 策略注册表
 STRATEGY_REGISTRY = {
     "ma_cross": MAStrategy,
@@ -528,6 +712,11 @@ STRATEGY_REGISTRY = {
     "obv": OBVStrategy,
     "dmi": DMIStrategy,
     "bias": BSIAStrategy,
+    "atr": ATRStrategy,
+    "sar": SARStrategy,
+    "aroon": AroonStrategy,
+    "mom": MOMStrategy,
+    "roc": ROCStrategy,
 }
 
 
