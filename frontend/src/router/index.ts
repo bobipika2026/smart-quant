@@ -12,6 +12,11 @@ const routes = [
     component: () => import('@/views/Strategy.vue')
   },
   {
+    path: '/strategy-guide',
+    name: 'strategy-guide',
+    component: () => import('@/views/StrategyGuide.vue')
+  },
+  {
     path: '/backtest',
     name: 'backtest',
     component: () => import('@/views/Backtest.vue')

@@ -92,6 +92,11 @@ const menuOptions: MenuOption[] = [
     icon: () => '📈'
   },
   {
+    label: '策略说明',
+    key: 'strategy-guide',
+    icon: () => '📚'
+  },
+  {
     label: '回测中心',
     key: 'backtest',
     icon: () => '🔄'
