@@ -699,6 +699,220 @@ class ROCStrategy(BaseStrategy):
         return df
 
 
+class VWAPStrategy(BaseStrategy):
+    """VWAP成交量加权平均价策略"""
+    
+    def __init__(self, deviation: float = 0.02):
+        super().__init__(
+            name="VWAP策略",
+            params={"deviation": deviation}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        volume_col = col_map.get('volume', '成交量')
+        
+        deviation = self.params.get('deviation', 0.02)
+        
+        # 计算典型价格
+        typical_price = (df[high_col] + df[low_col] + df[close_col]) / 3
+        
+        # 计算VWAP
+        df['vwap'] = (typical_price * df[volume_col]).cumsum() / df[volume_col].cumsum()
+        
+        # 生成信号
+        df['signal'] = 0
+        # 价格低于VWAP一定比例，买入
+        df.loc[df[close_col] < df['vwap'] * (1 - deviation), 'signal'] = 1
+        # 价格高于VWAP一定比例，卖出
+        df.loc[df[close_col] > df['vwap'] * (1 + deviation), 'signal'] = -1
+        
+        return df
+
+
+class DonchianStrategy(BaseStrategy):
+    """唐奇安通道策略"""
+    
+    def __init__(self, period: int = 20):
+        super().__init__(
+            name="唐奇安通道",
+            params={"period": period}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 20)
+        
+        # 计算唐奇安通道
+        df['upper'] = df[high_col].rolling(window=period).max()
+        df['lower'] = df[low_col].rolling(window=period).min()
+        df['mid'] = (df['upper'] + df['lower']) / 2
+        
+        # 生成信号
+        df['signal'] = 0
+        # 突破上轨，买入
+        df.loc[df[close_col] > df['upper'].shift(1), 'signal'] = 1
+        # 跌破下轨，卖出
+        df.loc[df[close_col] < df['lower'].shift(1), 'signal'] = -1
+        
+        return df
+
+
+class KeltnerStrategy(BaseStrategy):
+    """肯特纳通道策略"""
+    
+    def __init__(self, period: int = 20, multiplier: float = 2.0):
+        super().__init__(
+            name="肯特纳通道",
+            params={"period": period, "multiplier": multiplier}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        period = self.params.get('period', 20)
+        multiplier = self.params.get('multiplier', 2.0)
+        
+        # 计算ATR
+        tr = np.maximum(
+            df[high_col] - df[low_col],
+            np.maximum(
+                np.abs(df[high_col] - df[close_col].shift(1)),
+                np.abs(df[low_col] - df[close_col].shift(1))
+            )
+        )
+        atr = pd.Series(tr).rolling(window=period).mean()
+        
+        # 计算中轨（EMA）
+        mid = df[close_col].ewm(span=period).mean()
+        
+        # 计算上下轨
+        df['upper'] = mid + multiplier * atr
+        df['lower'] = mid - multiplier * atr
+        
+        # 生成信号
+        df['signal'] = 0
+        # 突破上轨，买入
+        df.loc[df[close_col] > df['upper'], 'signal'] = 1
+        # 跌破下轨，卖出
+        df.loc[df[close_col] < df['lower'], 'signal'] = -1
+        
+        return df
+
+
+class MFIStrategy(BaseStrategy):
+    """MFI资金流量指标策略"""
+    
+    def __init__(self, period: int = 14, oversold: float = 20, overbought: float = 80):
+        super().__init__(
+            name="MFI策略",
+            params={"period": period, "oversold": oversold, "overbought": overbought}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        volume_col = col_map.get('volume', '成交量')
+        
+        period = self.params.get('period', 14)
+        oversold = self.params.get('oversold', 20)
+        overbought = self.params.get('overbought', 80)
+        
+        # 计算典型价格
+        typical_price = (df[high_col] + df[low_col] + df[close_col]) / 3
+        
+        # 计算资金流量
+        mf = typical_price * df[volume_col]
+        
+        # 计算正负资金流量
+        positive_mf = np.where(typical_price > typical_price.shift(1), mf, 0)
+        negative_mf = np.where(typical_price < typical_price.shift(1), mf, 0)
+        
+        # 计算MFI
+        positive_sum = pd.Series(positive_mf).rolling(window=period).sum()
+        negative_sum = pd.Series(negative_mf).rolling(window=period).sum()
+        
+        df['mfi'] = 100 - (100 / (1 + positive_sum / negative_sum))
+        
+        # 生成信号
+        df['signal'] = 0
+        # MFI低于超卖线，买入
+        df.loc[df['mfi'] < oversold, 'signal'] = 1
+        # MFI高于超买线，卖出
+        df.loc[df['mfi'] > overbought, 'signal'] = -1
+        
+        return df
+
+
+class StochasticStrategy(BaseStrategy):
+    """Stochastic随机指标策略"""
+    
+    def __init__(self, k_period: int = 14, d_period: int = 3, oversold: float = 20, overbought: float = 80):
+        super().__init__(
+            name="Stochastic策略",
+            params={"k_period": k_period, "d_period": d_period, "oversold": oversold, "overbought": overbought}
+        )
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        col_map = {c.lower(): c for c in df.columns}
+        high_col = col_map.get('high', '最高')
+        low_col = col_map.get('low', '最低')
+        close_col = col_map.get('close', '收盘')
+        
+        k_period = self.params.get('k_period', 14)
+        d_period = self.params.get('d_period', 3)
+        oversold = self.params.get('oversold', 20)
+        overbought = self.params.get('overbought', 80)
+        
+        # 计算Stochastic
+        low_min = df[low_col].rolling(window=k_period).min()
+        high_max = df[high_col].rolling(window=k_period).max()
+        
+        df['stoch_k'] = (df[close_col] - low_min) / (high_max - low_min) * 100
+        df['stoch_d'] = df['stoch_k'].rolling(window=d_period).mean()
+        
+        # 生成信号
+        df['signal'] = 0
+        # K线上穿D线且低于超卖线，买入
+        df.loc[
+            (df['stoch_k'] > df['stoch_d']) & 
+            (df['stoch_k'].shift(1) <= df['stoch_d'].shift(1)) &
+            (df['stoch_k'] < oversold),
+            'signal'
+        ] = 1
+        # K线下穿D线且高于超买线，卖出
+        df.loc[
+            (df['stoch_k'] < df['stoch_d']) & 
+            (df['stoch_k'].shift(1) >= df['stoch_d'].shift(1)) &
+            (df['stoch_k'] > overbought),
+            'signal'
+        ] = -1
+        
+        return df
+
+
 # 策略注册表
 STRATEGY_REGISTRY = {
     "ma_cross": MAStrategy,
@@ -717,6 +931,11 @@ STRATEGY_REGISTRY = {
     "aroon": AroonStrategy,
     "mom": MOMStrategy,
     "roc": ROCStrategy,
+    "vwap": VWAPStrategy,
+    "donchian": DonchianStrategy,
+    "keltner": KeltnerStrategy,
+    "mfi": MFIStrategy,
+    "stochastic": StochasticStrategy,
 }
 
 
