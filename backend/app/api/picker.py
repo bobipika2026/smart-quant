@@ -48,28 +48,41 @@ class PickResult(BaseModel):
 @router.post("/condition")
 async def pick_by_condition(condition: PickerCondition):
     """条件选股"""
+    from app.services.data import DataService
+    
     db: Session = SessionLocal()
     try:
-        # 1. 从数据库获取股票列表
+        # 1. 确定要查询的股票代码范围
+        codes_to_query = None
+        
+        # 如果选择了行业，使用预定义的行业股票列表
+        if condition.industry:
+            industry_stocks = DataService.INDUSTRY_STOCKS.get(condition.industry, [])
+            if not industry_stocks:
+                return {"results": [], "count": 0, "message": f"未找到行业 [{condition.industry}] 的股票数据"}
+            codes_to_query = industry_stocks
+        
+        # 2. 从数据库获取股票列表
         query = db.query(Stock)
         
         if condition.exchange:
             query = query.filter(Stock.exchange == condition.exchange)
         
-        if condition.industry:
-            query = query.filter(Stock.industry == condition.industry)
+        if codes_to_query:
+            # 过滤出在指定行业内的股票
+            query = query.filter(Stock.code.in_(codes_to_query))
         
         stocks = query.limit(500).all()
         
         if not stocks:
             return {"results": [], "count": 0, "message": "没有符合条件的股票"}
         
-        # 2. 获取实时行情
+        # 3. 获取实时行情
         codes = [s.code for s in stocks]
         data_service = DataService()
         realtime_data = await data_service._fetch_sina_data(codes)
         
-        # 3. 筛选符合条件的股票
+        # 4. 筛选符合条件的股票
         results = []
         for stock in stocks:
             info = realtime_data.get(stock.code)
@@ -105,7 +118,7 @@ async def pick_by_condition(condition: PickerCondition):
                 "change": change,
                 "volume": round(volume, 2),
                 "exchange": stock.exchange,
-                "industry": stock.industry
+                "industry": condition.industry or stock.industry
             })
         
         # 4. 按涨跌幅排序
