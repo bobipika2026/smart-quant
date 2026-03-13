@@ -23,41 +23,72 @@ class FactorService:
         """获取基本面因子（PE、PB、ROE等）- 使用AkShare"""
         factors = {}
         
+        # 方法1: 财务摘要（最可靠）
         try:
-            # 获取估值数据 (百度数据)
             df = await asyncio.to_thread(
-                ak.stock_zh_valuation_baidu,
+                ak.stock_financial_abstract_ths,
                 symbol=stock_code,
-                indicator="总市值"
+                indicator='按报告期'
             )
             
             if df is not None and len(df) > 0:
-                # 获取最新市值
-                latest = df.iloc[-1]
-                mv = latest.get('value', 0)
-                if mv:
-                    factors['market_cap'] = float(mv)
+                latest = df.iloc[0]
+                
+                # ROE - 净资产收益率
+                roe = latest.get('净资产收益率-摊薄')
+                if roe and str(roe) not in ['False', 'None', '']:
+                    try:
+                        factors['roe'] = float(str(roe).replace('%', ''))
+                    except:
+                        pass
+                
+                # 每股净资产
+                nav = latest.get('每股净资产')
+                if nav and str(nav) not in ['False', 'None', '']:
+                    try:
+                        factors['nav_per_share'] = float(nav)
+                    except:
+                        pass
+                
+                # 销售净利率
+                npm = latest.get('销售净利率')
+                if npm and str(npm) not in ['False', 'None', '']:
+                    try:
+                        factors['net_profit_margin'] = float(str(npm).replace('%', ''))
+                    except:
+                        pass
+                
+                # 资产负债率
+                dr = latest.get('资产负债率')
+                if dr and str(dr) not in ['False', 'None', '']:
+                    try:
+                        factors['debt_ratio'] = float(str(dr).replace('%', ''))
+                    except:
+                        pass
+                
+                # 净利润同比增长率
+                pg = latest.get('净利润同比增长率')
+                if pg and str(pg) not in ['False', 'None', '']:
+                    try:
+                        factors['profit_growth'] = float(str(pg).replace('%', ''))
+                    except:
+                        pass
+                
+                # 营收同比增长率
+                rg = latest.get('营业总收入同比增长率')
+                if rg and str(rg) not in ['False', 'None', '']:
+                    try:
+                        factors['revenue_growth'] = float(str(rg).replace('%', ''))
+                    except:
+                        pass
+                
+                print(f"[因子] 财务摘要获取成功 {stock_code}")
                 
         except Exception as e:
-            print(f"[因子] 获取估值数据失败 {stock_code}: {e}")
+            print(f"[因子] 财务摘要失败 {stock_code}: {e}")
         
+        # 方法2: 个股信息（市值、行业）
         try:
-            # 获取个股市净率
-            df = await asyncio.to_thread(ak.stock_a_all_pb)
-            
-            if df is not None and len(df) > 0:
-                # 查找对应股票 - 字段名可能是 'code' 或 '代码'
-                code_col = 'code' if 'code' in df.columns else '代码'
-                stock_df = df[df[code_col] == stock_code]
-                if len(stock_df) > 0:
-                    pb_col = 'pb' if 'pb' in df.columns else '市净率'
-                    factors['pb'] = float(stock_df.iloc[-1].get(pb_col, 0) or 0)
-                
-        except Exception as e:
-            print(f"[因子] 获取市净率失败 {stock_code}: {e}")
-        
-        try:
-            # 获取个股信息
             df = await asyncio.to_thread(
                 ak.stock_individual_info_em,
                 symbol=stock_code
@@ -66,33 +97,44 @@ class FactorService:
             if df is not None and len(df) > 0:
                 info = dict(zip(df['item'], df['value']))
                 
-                # 市值 - 处理带"亿"的字符串
+                # 市值（个股信息返回的是元，转换为亿）
                 total_mv = info.get('总市值', '0')
-                if total_mv and not factors.get('market_cap'):
-                    if isinstance(total_mv, str):
-                        total_mv = total_mv.replace('亿', '').strip()
-                    factors['market_cap'] = float(total_mv) if total_mv else None
+                if total_mv:
+                    try:
+                        # 如果是元，转换为亿
+                        mv = float(total_mv)
+                        factors['market_cap'] = mv / 100000000 if mv > 100000 else mv
+                    except:
+                        pass
                 
                 float_mv = info.get('流通市值', '0')
                 if float_mv:
-                    if isinstance(float_mv, str):
-                        float_mv = float_mv.replace('亿', '').strip()
-                    factors['float_market_cap'] = float(float_mv) if float_mv else None
+                    try:
+                        fv = float(float_mv)
+                        factors['float_market_cap'] = fv / 100000000 if fv > 100000 else fv
+                    except:
+                        pass
                 
-                # PE
-                pe = info.get('市盈率', info.get('市盈率(动态)', '0'))
+                # 市盈率
+                pe = info.get('市盈率(动态)', info.get('市盈率', '0'))
                 if pe:
-                    if isinstance(pe, str):
-                        pe = pe.strip()
                     try:
                         factors['pe'] = float(pe)
+                    except:
+                        pass
+                
+                # 市净率
+                pb = info.get('市净率', '0')
+                if pb:
+                    try:
+                        factors['pb'] = float(pb)
                     except:
                         pass
                 
                 print(f"[因子] 个股信息获取成功 {stock_code}")
                 
         except Exception as e:
-            print(f"[因子] 获取个股信息失败 {stock_code}: {e}")
+            print(f"[因子] 个股信息失败 {stock_code}: {e}")
         
         return factors
     
