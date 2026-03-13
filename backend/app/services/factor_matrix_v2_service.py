@@ -49,17 +49,31 @@ class FactorMatrixV2:
     
     # 条件因子（股票筛选条件）
     CONDITION_FACTORS = [
-        {"code": "pe_lt_20", "name": "PE<20", "type": "condition", "params": {"field": "pe", "op": "<", "value": 20}},
-        {"code": "pe_lt_15", "name": "PE<15", "type": "condition", "params": {"field": "pe", "op": "<", "value": 15}},
-        {"code": "pb_lt_2", "name": "PB<2", "type": "condition", "params": {"field": "pb", "op": "<", "value": 2}},
-        {"code": "roe_gt_10", "name": "ROE>10%", "type": "condition", "params": {"field": "roe", "op": ">", "value": 10}},
-        {"code": "roe_gt_15", "name": "ROE>15%", "type": "condition", "params": {"field": "roe", "op": ">", "value": 15}},
-        {"code": "debt_lt_60", "name": "负债率<60%", "type": "condition", "params": {"field": "debt_ratio", "op": "<", "value": 60}},
-        {"code": "north_gt_1", "name": "北向持股>1%", "type": "condition", "params": {"field": "north_holdings_ratio", "op": ">", "value": 1}},
-        {"code": "north_gt_3", "name": "北向持股>3%", "type": "condition", "params": {"field": "north_holdings_ratio", "op": ">", "value": 3}},
-        {"code": "cap_gt_100", "name": "市值>100亿", "type": "condition", "params": {"field": "market_cap", "op": ">", "value": 100}},
-        {"code": "cap_gt_500", "name": "市值>500亿", "type": "condition", "params": {"field": "market_cap", "op": ">", "value": 500}},
+        {"code": "pe_lt_20", "name": "PE<20", "type": "condition", "params": {"field": "pe", "op": "<", "value": 20}, "group": "pe"},
+        {"code": "pe_lt_15", "name": "PE<15", "type": "condition", "params": {"field": "pe", "op": "<", "value": 15}, "group": "pe"},
+        {"code": "pb_lt_2", "name": "PB<2", "type": "condition", "params": {"field": "pb", "op": "<", "value": 2}, "group": "pb"},
+        {"code": "roe_gt_10", "name": "ROE>10%", "type": "condition", "params": {"field": "roe", "op": ">", "value": 10}, "group": "roe"},
+        {"code": "roe_gt_15", "name": "ROE>15%", "type": "condition", "params": {"field": "roe", "op": ">", "value": 15}, "group": "roe"},
+        {"code": "debt_lt_60", "name": "负债率<60%", "type": "condition", "params": {"field": "debt_ratio", "op": "<", "value": 60}, "group": "debt"},
+        {"code": "north_gt_1", "name": "北向持股>1%", "type": "condition", "params": {"field": "north_holdings_ratio", "op": ">", "value": 1}, "group": "north"},
+        {"code": "north_gt_3", "name": "北向持股>3%", "type": "condition", "params": {"field": "north_holdings_ratio", "op": ">", "value": 3}, "group": "north"},
+        {"code": "cap_gt_100", "name": "市值>100亿", "type": "condition", "params": {"field": "market_cap", "op": ">", "value": 100}, "group": "cap"},
+        {"code": "cap_gt_500", "name": "市值>500亿", "type": "condition", "params": {"field": "market_cap", "op": ">", "value": 500}, "group": "cap"},
     ]
+    
+    # 互斥组定义（同一组内只能选一个）
+    MUTEX_GROUPS = {
+        # 策略互斥组
+        "ma": ["ma_5_20", "ma_5_30", "ma_10_20", "ma_10_30"],
+        "macd": ["macd_default", "macd_fast"],
+        "rsi": ["rsi_14_70", "rsi_14_80"],
+        
+        # 条件互斥组
+        "pe": ["pe_lt_20", "pe_lt_15"],
+        "roe": ["roe_gt_10", "roe_gt_15"],
+        "north": ["north_gt_1", "north_gt_3"],
+        "cap": ["cap_gt_100", "cap_gt_500"],
+    }
     
     # 时间因子
     TIME_FACTORS = [
@@ -70,6 +84,28 @@ class FactorMatrixV2:
     ]
     
     ALL_FACTORS = STRATEGY_FACTORS + CONDITION_FACTORS + TIME_FACTORS
+    
+    @staticmethod
+    def is_mutex(factor1: str, factor2: str) -> bool:
+        """检查两个因子是否互斥"""
+        for group_name, factors in FactorMatrixV2.MUTEX_GROUPS.items():
+            if factor1 in factors and factor2 in factors:
+                return True
+        return False
+    
+    @staticmethod
+    def validate_combination(factors: List[str]) -> Tuple[bool, str]:
+        """
+        验证因子组合是否有效
+        
+        Returns:
+            (is_valid, error_message)
+        """
+        for group_name, group_factors in FactorMatrixV2.MUTEX_GROUPS.items():
+            selected = [f for f in factors if f in group_factors]
+            if len(selected) > 1:
+                return False, f"互斥因子冲突: {selected} (组: {group_name})"
+        return True, ""
     
     # ==================== 初始化因子定义 ====================
     
@@ -104,63 +140,217 @@ class FactorMatrixV2:
     # ==================== 实验生成 ====================
     
     @staticmethod
-    def generate_experiments(
-        strategy_factors: List[str] = None,  # 策略因子列表
-        condition_factors: List[str] = None,  # 条件因子列表
-        time_factors: List[str] = None,  # 时间因子列表
-        stock_code: str = None,
-        max_combinations: int = 100
+    def generate_all_experiments(
+        stock_code: str,
+        include_conditions: bool = True
     ) -> List[Dict]:
         """
-        生成因子组合实验
+        生成完整的因子组合实验（单股票约90万+）
         
         Args:
-            strategy_factors: 策略因子代码列表，None则使用全部
-            condition_factors: 条件因子代码列表
-            time_factors: 时间因子代码列表
             stock_code: 股票代码
-            max_combinations: 最大组合数
+            include_conditions: 是否包含条件因子
         
         Returns:
-            实验列表，每个实验是一个因子组合
+            所有实验列表
         """
-        # 使用默认因子
-        if strategy_factors is None:
-            strategy_factors = [f["code"] for f in FactorMatrixV2.STRATEGY_FACTORS[:5]]
-        if condition_factors is None:
-            condition_factors = [f["code"] for f in FactorMatrixV2.CONDITION_FACTORS[:5]]
-        if time_factors is None:
-            time_factors = [f["code"] for f in FactorMatrixV2.TIME_FACTORS[:2]]
-        
         experiments = []
         exp_id = 1
         
-        # 生成策略因子组合（选择1-3个策略）
-        for num_strategies in range(1, min(4, len(strategy_factors) + 1)):
-            for strategy_combo in itertools.combinations(strategy_factors, num_strategies):
-                # 生成条件因子组合（选择0-3个条件）
-                for num_conditions in range(0, min(4, len(condition_factors) + 1)):
-                    for condition_combo in itertools.combinations(condition_factors, num_conditions):
-                        # 时间因子（选1个）
-                        for time_factor in time_factors:
-                            # 构建因子组合
-                            factor_combination = {}
-                            all_factors = list(strategy_combo) + list(condition_combo) + [time_factor]
+        # 按类型分组
+        strategy_by_type = {
+            'ma': ['ma_5_20', 'ma_5_30', 'ma_10_20', 'ma_10_30'],
+            'macd': ['macd_default', 'macd_fast'],
+            'rsi': ['rsi_14_70', 'rsi_14_80'],
+            'kdj': ['kdj_default'],
+            'boll': ['boll_20_2'],
+            'cci': ['cci_14'],
+            'wr': ['wr_14'],
+        }
+        
+        condition_by_group = {
+            'pe': ['pe_lt_20', 'pe_lt_15'],
+            'pb': ['pb_lt_2'],
+            'roe': ['roe_gt_10', 'roe_gt_15'],
+            'debt': ['debt_lt_60'],
+            'north': ['north_gt_1', 'north_gt_3'],
+            'cap': ['cap_gt_100', 'cap_gt_500'],
+        }
+        
+        time_factors = ['period_3m', 'period_6m', 'period_1y', 'period_2y']
+        
+        # 生成策略组合（每种类型选0或1个）
+        strategy_types = list(strategy_by_type.keys())
+        
+        for num_types in range(1, len(strategy_types) + 1):
+            for selected_types in itertools.combinations(strategy_types, num_types):
+                # 每种类型选一个具体策略
+                type_options = [strategy_by_type[t] for t in selected_types]
+                
+                for strategy_combo in itertools.product(*type_options):
+                    # 验证互斥
+                    is_valid, _ = FactorMatrixV2.validate_combination(list(strategy_combo))
+                    if not is_valid:
+                        continue
+                    
+                    # 生成条件组合
+                    if include_conditions:
+                        # 每组选0或1个
+                        condition_options = []
+                        for group, factors in condition_by_group.items():
+                            condition_options.append([None] + factors)  # None表示不选
+                        
+                        for condition_combo in itertools.product(*condition_options):
+                            conditions = [c for c in condition_combo if c is not None]
                             
+                            # 生成时间组合
+                            for time_factor in time_factors:
+                                all_factors = list(strategy_combo) + conditions + [time_factor]
+                                
+                                factor_combination = {}
+                                for f in FactorMatrixV2.ALL_FACTORS:
+                                    factor_combination[f["code"]] = 1 if f["code"] in all_factors else 0
+                                
+                                experiments.append({
+                                    "experiment_code": f"EXP_{exp_id:06d}",
+                                    "stock_code": stock_code,
+                                    "factor_combination": factor_combination,
+                                    "active_factors": all_factors,
+                                    "active_count": len(all_factors)
+                                })
+                                exp_id += 1
+                    else:
+                        # 不加条件因子
+                        for time_factor in time_factors:
+                            all_factors = list(strategy_combo) + [time_factor]
+                            
+                            factor_combination = {}
                             for f in FactorMatrixV2.ALL_FACTORS:
                                 factor_combination[f["code"]] = 1 if f["code"] in all_factors else 0
                             
                             experiments.append({
-                                "experiment_code": f"EXP_{exp_id:04d}",
+                                "experiment_code": f"EXP_{exp_id:06d}",
                                 "stock_code": stock_code,
                                 "factor_combination": factor_combination,
                                 "active_factors": all_factors,
                                 "active_count": len(all_factors)
                             })
-                            
                             exp_id += 1
-                            if len(experiments) >= max_combinations:
-                                return experiments
+        
+        return experiments
+    
+    @staticmethod
+    def generate_experiments(
+        strategy_factors: List[str] = None,
+        condition_factors: List[str] = None,
+        time_factors: List[str] = None,
+        stock_code: str = None,
+        max_combinations: int = 100,
+        simple_mode: bool = True
+    ) -> List[Dict]:
+        """
+        生成因子组合实验
+
+        Args:
+            strategy_factors: 策略因子代码列表
+            condition_factors: 条件因子代码列表
+            time_factors: 时间因子代码列表
+            stock_code: 股票代码
+            max_combinations: 最大组合数
+            simple_mode: 简化模式（1策略+1时间，不加条件）
+
+        Returns:
+            实验列表
+        """
+        # 使用默认因子
+        if strategy_factors is None:
+            strategy_factors = [f["code"] for f in FactorMatrixV2.STRATEGY_FACTORS]
+        if condition_factors is None:
+            condition_factors = [f["code"] for f in FactorMatrixV2.CONDITION_FACTORS]
+        if time_factors is None:
+            time_factors = [f["code"] for f in FactorMatrixV2.TIME_FACTORS]
+        
+        experiments = []
+        exp_id = 1
+        
+        if simple_mode:
+            # 简化模式：
+            # 1. 单策略：每个策略 × 每个时间
+            # 2. 双策略组合：选最常用的2个策略类型（MA + MACD）
+            
+            # 单策略实验
+            for strategy in strategy_factors:
+                for time_factor in time_factors:
+                    factor_combination = {}
+                    for f in FactorMatrixV2.ALL_FACTORS:
+                        factor_combination[f["code"]] = 1 if f["code"] in [strategy, time_factor] else 0
+                    
+                    experiments.append({
+                        "experiment_code": f"EXP_{exp_id:04d}",
+                        "stock_code": stock_code,
+                        "factor_combination": factor_combination,
+                        "active_factors": [strategy, time_factor],
+                        "active_count": 2
+                    })
+                    exp_id += 1
+            
+            # 双策略组合（MA + MACD，MA + RSI，MACD + RSI）
+            # 只用默认参数
+            ma_default = "ma_5_20"
+            macd_default = "macd_default"
+            rsi_default = "rsi_14_70"
+            
+            double_combos = [
+                [ma_default, macd_default],
+                [ma_default, rsi_default],
+                [macd_default, rsi_default],
+            ]
+            
+            for combo in double_combos:
+                for time_factor in time_factors:
+                    all_factors = combo + [time_factor]
+                    
+                    # 验证互斥
+                    is_valid, _ = FactorMatrixV2.validate_combination(all_factors)
+                    if not is_valid:
+                        continue
+                    
+                    factor_combination = {}
+                    for f in FactorMatrixV2.ALL_FACTORS:
+                        factor_combination[f["code"]] = 1 if f["code"] in all_factors else 0
+                    
+                    experiments.append({
+                        "experiment_code": f"EXP_{exp_id:04d}",
+                        "stock_code": stock_code,
+                        "factor_combination": factor_combination,
+                        "active_factors": all_factors,
+                        "active_count": len(all_factors)
+                    })
+                    exp_id += 1
+        else:
+            # 完整模式：策略组合 × 条件组合 × 时间
+            for num_strategies in range(1, min(4, len(strategy_factors) + 1)):
+                for strategy_combo in itertools.combinations(strategy_factors, num_strategies):
+                    for num_conditions in range(0, min(4, len(condition_factors) + 1)):
+                        for condition_combo in itertools.combinations(condition_factors, num_conditions):
+                            for time_factor in time_factors:
+                                factor_combination = {}
+                                all_factors = list(strategy_combo) + list(condition_combo) + [time_factor]
+                                
+                                for f in FactorMatrixV2.ALL_FACTORS:
+                                    factor_combination[f["code"]] = 1 if f["code"] in all_factors else 0
+                                
+                                experiments.append({
+                                    "experiment_code": f"EXP_{exp_id:04d}",
+                                    "stock_code": stock_code,
+                                    "factor_combination": factor_combination,
+                                    "active_factors": all_factors,
+                                    "active_count": len(all_factors)
+                                })
+                                
+                                exp_id += 1
+                                if len(experiments) >= max_combinations:
+                                    return experiments
         
         return experiments
     
