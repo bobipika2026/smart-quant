@@ -257,19 +257,21 @@ class DataService:
             try:
                 import tushare as ts
                 ts.set_token(settings.TUSHARE_TOKEN)
-                pro = ts.pro_api()
                 
                 # 转换代码格式: 000001 -> 000001.SZ
                 ts_code = f"{code}.SZ" if code.startswith("0") or code.startswith("3") else f"{code}.SH"
                 
+                # 使用 pro_bar 获取前复权数据
                 df = await asyncio.to_thread(
-                    pro.daily,
+                    ts.pro_bar,
                     ts_code=ts_code,
                     start_date=start_date,
-                    end_date=end_date
+                    end_date=end_date,
+                    adj='qfq'  # 前复权
                 )
                 
                 if df is not None and len(df) > 0:
+                    # 重命名列
                     df = df.rename(columns={
                         'trade_date': '日期',
                         'open': '开盘',
@@ -281,7 +283,7 @@ class DataService:
                     })
                     df['日期'] = pd.to_datetime(df['日期']).dt.strftime('%Y-%m-%d')
                     df = df.sort_values('日期')
-                    print(f"[Tushare Pro] 获取历史数据成功: {code}, {len(df)}条")
+                    print(f"[Tushare Pro] 获取前复权数据成功: {code}, {len(df)}条")
                     return df[['日期', '开盘', '收盘', '最高', '最低', '成交量']]
             except Exception as e:
                 print(f"[Tushare Pro] 获取历史数据失败: {e}")

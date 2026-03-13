@@ -1,5 +1,6 @@
 """
 因子服务 - 获取各类因子数据
+数据源优先级: Tushare Pro > AkShare
 """
 import akshare as ak
 import pandas as pd
@@ -11,19 +12,63 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.factor import FactorValue
+from app.config import settings
 
 
 class FactorService:
     """因子数据服务"""
     
+    # Tushare Pro 接口
+    _ts_pro = None
+    
+    @classmethod
+    def get_ts_pro(cls):
+        """获取 Tushare Pro 接口"""
+        if cls._ts_pro is None and settings.TUSHARE_TOKEN:
+            import tushare as ts
+            ts.set_token(settings.TUSHARE_TOKEN)
+            cls._ts_pro = ts.pro_api()
+        return cls._ts_pro
+    
     # ==================== 基本面因子 ====================
     
     @staticmethod
     async def get_fundamental_factors(stock_code: str) -> Dict:
-        """获取基本面因子（PE、PB、ROE等）- 使用AkShare"""
+        """获取基本面因子（PE、PB、ROE等）- 优先使用 Tushare"""
         factors = {}
         
-        # 方法1: 财务摘要（最可靠）
+        # 优先使用 Tushare Pro
+        if settings.TUSHARE_TOKEN:
+            try:
+                pro = FactorService.get_ts_pro()
+                ts_code = f"{stock_code}.SZ" if stock_code.startswith(("0", "3")) else f"{stock_code}.SH"
+                
+                # 获取最近的交易日数据
+                df = await asyncio.to_thread(
+                    pro.daily_basic,
+                    ts_code=ts_code,
+                    start_date=(datetime.now() - timedelta(days=7)).strftime('%Y%m%d'),
+                    end_date=datetime.now().strftime('%Y%m%d'),
+                    fields='pe,pb,ps,total_mv,circ_mv,turnover_rate,volume_ratio,dv_ratio'
+                )
+                
+                if df is not None and len(df) > 0:
+                    row = df.iloc[0]  # 取最新一条
+                    factors['pe'] = float(row['pe']) if row['pe'] and not pd.isna(row['pe']) else None
+                    factors['pb'] = float(row['pb']) if row['pb'] and not pd.isna(row['pb']) else None
+                    factors['ps'] = float(row['ps']) if row['ps'] and not pd.isna(row['ps']) else None
+                    # total_mv 单位是万元，转换为亿
+                    factors['market_cap'] = float(row['total_mv']) / 10000 if row['total_mv'] and not pd.isna(row['total_mv']) else None
+                    factors['float_market_cap'] = float(row['circ_mv']) / 10000 if row['circ_mv'] and not pd.isna(row['circ_mv']) else None
+                    factors['turnover_rate'] = float(row['turnover_rate']) if row['turnover_rate'] and not pd.isna(row['turnover_rate']) else None
+                    factors['volume_ratio'] = float(row['volume_ratio']) if row['volume_ratio'] and not pd.isna(row['volume_ratio']) else None
+                    factors['dividend_yield'] = float(row['dv_ratio']) if row['dv_ratio'] and not pd.isna(row['dv_ratio']) else None
+                    print(f"[Tushare] 获取基本面因子成功 {stock_code}")
+                    return factors
+            except Exception as e:
+                print(f"[Tushare] 获取基本面因子失败 {stock_code}: {e}")
+        
+        # 降级使用 AkShare
         try:
             df = await asyncio.to_thread(
                 ak.stock_financial_abstract_ths,
