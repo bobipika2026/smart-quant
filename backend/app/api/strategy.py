@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.services.strategy import list_strategies, get_strategy
 from app.services.data import DataService
 from app.services.backtest import BacktestEngine
+from app.services.factor_matrix_service import FactorMatrixService
 
 router = APIRouter(prefix="/api/strategy", tags=["策略管理"])
 
@@ -58,6 +59,20 @@ async def run_backtest(request: BacktestRequest):
         
         results['strategy_name'] = strategy.name
         results['stock_code'] = request.stock_code
+        
+        # 保存回测因子到因子矩阵
+        try:
+            stock_name = request.stock_code  # 简化处理，可后续补充股票名称
+            await FactorMatrixService.save_backtest_factors(
+                backtest_result=results,
+                strategy_id=request.strategy_id,
+                strategy_name=strategy.name,
+                stock_code=request.stock_code,
+                stock_name=stock_name,
+                params=request.params or strategy.params
+            )
+        except Exception as e:
+            print(f"[回测] 保存因子失败: {e}")  # 不影响主流程
         
         return results
         

@@ -110,6 +110,11 @@ const menuOptions: MenuOption[] = [
     label: '实时监控',
     key: 'monitor',
     icon: () => '📡'
+  },
+  {
+    label: '因子矩阵',
+    key: 'factor-matrix',
+    icon: () => '📊'
   }
 ]
 
@@ -119,9 +124,11 @@ const pageTitle = computed(() => {
   const titles: Record<string, string> = {
     home: '首页概览',
     strategy: '策略管理',
+    'strategy-guide': '策略说明',
     backtest: '回测中心',
     'stock-picker': '选股系统',
-    monitor: '实时监控'
+    monitor: '实时监控',
+    'factor-matrix': '因子矩阵'
   }
   return titles[route.name as string] || 'Smart Quant'
 })

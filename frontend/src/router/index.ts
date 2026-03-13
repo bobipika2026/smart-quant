@@ -30,6 +30,11 @@ const routes = [
     path: '/monitor',
     name: 'monitor',
     component: () => import('@/views/Monitor.vue')
+  },
+  {
+    path: '/factor-matrix',
+    name: 'factor-matrix',
+    component: () => import('@/views/FactorMatrix.vue')
   }
 ]
 

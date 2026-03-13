@@ -35,16 +35,55 @@ class FactorValue(Base):
     volatility_20 = Column(Float)  # 20日波动率
     beta = Column(Float)  # Beta值
     
-    # 技术因子
+    # 技术因子 - 均线系列
     ma_5 = Column(Float)  # 5日均线
+    ma_10 = Column(Float)  # 10日均线
     ma_20 = Column(Float)  # 20日均线
+    ma_60 = Column(Float)  # 60日均线
+    
+    # 技术因子 - 趋势指标
     rsi_14 = Column(Float)  # 14日RSI
-    macd = Column(Float)  # MACD
+    macd = Column(Float)  # MACD线
+    macd_signal = Column(Float)  # MACD信号线
+    macd_hist = Column(Float)  # MACD柱状图
     atr_14 = Column(Float)  # 14日ATR
     
+    # 技术因子 - 布林带
+    boll_upper = Column(Float)  # 布林带上轨
+    boll_lower = Column(Float)  # 布林带下轨
+    boll_mid = Column(Float)  # 布林带中轨
+    boll_width = Column(Float)  # 布林带宽度(%)
+    
+    # 技术因子 - KDJ
+    kdj_k = Column(Float)  # KDJ-K值
+    kdj_d = Column(Float)  # KDJ-D值
+    kdj_j = Column(Float)  # KDJ-J值
+    
+    # 技术因子 - 其他
+    cci_14 = Column(Float)  # 14日CCI
+    wr_14 = Column(Float)  # 14日WR威廉指标
+    dmi_plus = Column(Float)  # DMI+DI
+    dmi_minus = Column(Float)  # DMI-DI
+    dmi_adx = Column(Float)  # DMI ADX
+    obv = Column(Float)  # OBV能量潮
+    bias_6 = Column(Float)  # 6日乖离率
+    bias_12 = Column(Float)  # 12日乖离率
+    bias_24 = Column(Float)  # 24日乖离率
+    vwap = Column(Float)  # VWAP成交量加权均价
+    aroon_up = Column(Float)  # Aroon上升指标
+    aroon_down = Column(Float)  # Aroon下降指标
+    aroon_osc = Column(Float)  # Aroon震荡指标
+    mom_10 = Column(Float)  # 10日动量
+    roc_10 = Column(Float)  # 10日变动率
+    donchian_high = Column(Float)  # 唐奇安通道上轨
+    donchian_low = Column(Float)  # 唐奇安通道下轨
+    donchian_mid = Column(Float)  # 唐奇安通道中轨
+    
     # 情绪因子
-    north_flow = Column(Float)  # 北向资金净买入（万元）
-    margin_balance = Column(Float)  # 融资余额（万元）
+    north_holdings = Column(Float)  # 北向资金持股市值（万元）
+    north_holdings_ratio = Column(Float)  # 北向资金持股占比（%）
+    north_5d_change = Column(Float)  # 北向资金5日增持幅度（%）
+    margin_balance = Column(Float)  # 融资余额（亿元）
     
     created_at = Column(DateTime, server_default=func.now())
 
