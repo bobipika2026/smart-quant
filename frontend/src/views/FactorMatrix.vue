@@ -3,12 +3,7 @@
     <!-- 最佳因子组合卡片 -->
     <n-card title="🏆 最佳因子组合" class="mb-4">
       <template #header-extra>
-        <n-space>
-          <n-button @click="runBacktest" type="primary" :loading="loading">
-            运行回测
-          </n-button>
-          <n-input v-model:value="searchStock" placeholder="搜索股票" style="width: 120px" clearable />
-        </n-space>
+        <n-input v-model:value="searchStock" placeholder="搜索股票" style="width: 150px" clearable />
       </template>
 
       <!-- 统计 -->
@@ -48,13 +43,10 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { NCard, NDataTable, NStatistic, NGrid, NGi, NSpace, NButton, NInput, NTag, useMessage } from 'naive-ui'
+import { NCard, NDataTable, NStatistic, NGrid, NGi, NInput, NTag } from 'naive-ui'
 import * as echarts from 'echarts'
 
-const message = useMessage()
-
 // 数据
-const loading = ref(false)
 const searchStock = ref('')
 const bestCombinations = ref([])
 const statistics = ref({})
@@ -169,30 +161,6 @@ async function fetchData() {
     
   } catch (e) {
     console.error('获取数据失败:', e)
-  }
-}
-
-// 运行回测
-async function runBacktest() {
-  loading.value = true
-  message.loading('正在运行回测...')
-  
-  try {
-    const res = await fetch('/api/factor-matrix-v2/experiments/parallel-run?stock_code=000001&num_agents=4', {
-      method: 'POST'
-    })
-    const data = await res.json()
-    
-    if (data.error) {
-      message.error(data.error)
-    } else {
-      message.success(`完成! Top 10 已保存`)
-      await fetchData()
-    }
-  } catch (e) {
-    message.error('回测失败: ' + e.message)
-  } finally {
-    loading.value = false
   }
 }
 
