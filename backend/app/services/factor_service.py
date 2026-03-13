@@ -401,7 +401,7 @@ class FactorService:
         """获取所有因子"""
         all_factors = {
             'stock_code': stock_code,
-            'trade_date': datetime.now().strftime('%Y-%m-%d')
+            'trade_date': datetime.now().date()  # 使用 date 对象
         }
         
         # 并行获取各类因子

@@ -5,8 +5,36 @@ from fastapi import APIRouter, Query
 from typing import Optional
 
 from app.services.factor_matrix_service import FactorMatrixService
+from app.services.factor_selector import FactorSelector
 
 router = APIRouter(prefix="/api/factor-matrix", tags=["因子矩阵"])
+
+
+@router.post("/generate")
+async def generate_factor_matrix(
+    limit: int = Query(100, ge=1, le=5000, description="股票数量")
+):
+    """
+    生成因子矩阵
+    
+    为所有股票（或指定数量）生成因子数据
+    """
+    result = await FactorMatrixService.generate_factor_matrix(limit=limit)
+    return result
+
+
+@router.get("/data")
+async def get_factor_matrix_data(
+    trade_date: Optional[str] = Query(None, description="交易日期 YYYY-MM-DD"),
+    limit: int = Query(100, ge=1, le=1000, description="返回条数")
+):
+    """
+    获取因子矩阵数据
+    
+    返回股票×因子的矩阵数据
+    """
+    result = FactorMatrixService.get_factor_matrix_data(trade_date=trade_date, limit=limit)
+    return result
 
 
 @router.get("/statistics")
@@ -128,3 +156,66 @@ async def list_available_factors():
             }
         ]
     }
+
+
+# ==================== 因子选股 ====================
+
+@router.get("/select/presets")
+async def get_filter_presets():
+    """获取预设筛选方案"""
+    presets = await FactorSelector.get_filter_presets()
+    return {"presets": presets}
+
+
+@router.get("/select/stocks")
+async def select_stocks(
+    preset: Optional[str] = Query(None, description="预设方案: quality/value/growth"),
+    roe_min: Optional[float] = Query(None, description="ROE最小值(%)"),
+    debt_ratio_max: Optional[float] = Query(None, description="负债率最大值(%)"),
+    market_cap_min: Optional[float] = Query(None, description="市值最小值(亿)"),
+    north_holdings_min: Optional[float] = Query(None, description="北向持股最小值(%)"),
+    pe_max: Optional[float] = Query(None, description="PE最大值"),
+    pb_max: Optional[float] = Query(None, description="PB最大值"),
+    sort_by: str = Query("roe", description="排序字段"),
+    limit: int = Query(100, ge=1, le=500, description="返回数量")
+):
+    """
+    基于因子筛选股票
+    
+    可以使用预设方案或自定义筛选条件
+    """
+    # 预设方案
+    if preset:
+        preset_map = {
+            'quality': FactorSelector.QUALITY_STOCK_FILTER,
+            'value': FactorSelector.VALUE_STOCK_FILTER,
+            'growth': FactorSelector.GROWTH_STOCK_FILTER,
+        }
+        filters = preset_map.get(preset, FactorSelector.QUALITY_STOCK_FILTER)
+    else:
+        # 自定义筛选条件
+        filters = {}
+        if roe_min is not None:
+            filters['roe_min'] = roe_min
+        if debt_ratio_max is not None:
+            filters['debt_ratio_max'] = debt_ratio_max
+        if market_cap_min is not None:
+            filters['market_cap_min'] = market_cap_min
+        if north_holdings_min is not None:
+            filters['north_holdings_min'] = north_holdings_min
+        if pe_max is not None:
+            filters['pe_max'] = pe_max
+        if pb_max is not None:
+            filters['pb_max'] = pb_max
+        
+        # 默认条件
+        if not filters:
+            filters = FactorSelector.QUALITY_STOCK_FILTER
+    
+    result = await FactorSelector.select_stocks(
+        filters=filters,
+        sort_by=sort_by,
+        limit=limit
+    )
+    
+    return result

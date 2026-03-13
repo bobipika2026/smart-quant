@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
 from app.database import SessionLocal
-from app.models.factor import FactorBacktest, FactorPerformance
+from app.models.factor import FactorBacktest, FactorPerformance, FactorValue
 from app.services.factor_service import FactorService
+from app.models import Stock
 
 
 class FactorMatrixService:
@@ -184,7 +185,141 @@ class FactorMatrixService:
         else:
             return '小盘'
     
-    # ==================== 因子矩阵查询 ====================
+    # ==================== 因子矩阵生成（全量股票） ====================
+    
+    @staticmethod
+    async def generate_factor_matrix(stock_codes: List[str] = None, limit: int = 100) -> Dict:
+        """
+        生成因子矩阵
+        
+        Args:
+            stock_codes: 股票列表，None则使用全市场
+            limit: 股票数量限制
+        
+        Returns:
+            因子矩阵统计信息
+        """
+        from app.services.data import DataService
+        from app.models import Stock
+        
+        db: Session = SessionLocal()
+        try:
+            # 获取股票列表
+            if stock_codes is None:
+                stocks = db.query(Stock.code).limit(limit).all()
+                stock_codes = [s.code for s in stocks]
+            
+            print(f"[因子矩阵] 开始生成，股票数: {len(stock_codes)}")
+            
+            data_service = DataService()
+            success_count = 0
+            fail_count = 0
+            
+            for i, code in enumerate(stock_codes):
+                try:
+                    # 获取历史数据
+                    hist_data = await data_service.get_stock_history(code)
+                    
+                    # 获取所有因子
+                    factors = await FactorService.get_all_factors(code, hist_data)
+                    
+                    # 保存到 factor_values 表
+                    await FactorService.save_factors(factors)
+                    
+                    success_count += 1
+                    if (i + 1) % 50 == 0:
+                        print(f"[因子矩阵] 进度: {i+1}/{len(stock_codes)}")
+                    
+                except Exception as e:
+                    fail_count += 1
+                    print(f"[因子矩阵] {code} 失败: {e}")
+            
+            return {
+                'success': True,
+                'total': len(stock_codes),
+                'success_count': success_count,
+                'fail_count': fail_count
+            }
+            
+        except Exception as e:
+            return {'error': str(e)}
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_factor_matrix_data(
+        trade_date: str = None,
+        limit: int = 100
+    ) -> Dict:
+        """
+        获取因子矩阵数据
+        
+        Args:
+            trade_date: 交易日期
+            limit: 返回条数
+        """
+        db: Session = SessionLocal()
+        try:
+            query = db.query(FactorValue)
+            
+            if trade_date:
+                query = query.filter(FactorValue.trade_date == trade_date)
+            
+            query = query.limit(limit)
+            records = query.all()
+            
+            # 定义因子列
+            factor_columns = {
+                '基本面': ['pe', 'pb', 'roe', 'debt_ratio', 'nav_per_share', 'market_cap', 'float_market_cap'],
+                '市场': ['turnover_rate', 'volume_ratio', 'volatility_20'],
+                '情绪': ['north_holdings_ratio', 'north_5d_change', 'margin_balance'],
+                '技术-均线': ['ma_5', 'ma_10', 'ma_20', 'ma_60'],
+                '技术-趋势': ['rsi_14', 'macd', 'macd_hist', 'atr_14'],
+                '技术-布林带': ['boll_upper', 'boll_lower', 'boll_mid', 'boll_width'],
+                '技术-KDJ': ['kdj_k', 'kdj_d', 'kdj_j'],
+                '技术-DMI': ['dmi_plus', 'dmi_minus', 'dmi_adx'],
+                '技术-其他': ['cci_14', 'wr_14', 'obv', 'bias_6', 'bias_12', 'vwap', 'aroon_osc', 'mom_10', 'roc_10'],
+            }
+            
+            # 转换为矩阵格式
+            matrix = []
+            for r in records:
+                row = {
+                    'stock_code': r.stock_code,
+                    'trade_date': str(r.trade_date),
+                }
+                
+                # 添加各类因子
+                for cat, cols in factor_columns.items():
+                    for col in cols:
+                        row[col] = getattr(r, col, None)
+                
+                matrix.append(row)
+            
+            # 统计因子可用性
+            factor_stats = {}
+            all_cols = [col for cols in factor_columns.values() for col in cols]
+            for col in all_cols:
+                available = sum(1 for r in records if getattr(r, col, None) is not None)
+                factor_stats[col] = {
+                    'available': available,
+                    'total': len(records),
+                    'rate': round(available / len(records) * 100, 1) if records else 0
+                }
+            
+            return {
+                'count': len(matrix),
+                'data': matrix,
+                'factor_stats': factor_stats,
+                'factor_columns': factor_columns
+            }
+            
+        except Exception as e:
+            return {'error': str(e)}
+        finally:
+            db.close()
+
+    # ==================== 因子矩阵查询（旧） ====================
     
     @staticmethod
     def get_factor_matrix(
