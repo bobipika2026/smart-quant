@@ -114,6 +114,8 @@ class FactorBacktest(Base):
     pe = Column(Float)  # 市盈率
     pb = Column(Float)  # 市净率
     roe = Column(Float)  # 净资产收益率
+    debt_ratio = Column(Float)  # 资产负债率
+    nav_per_share = Column(Float)  # 每股净资产
     net_profit_margin = Column(Float)  # 净利润率
     revenue_growth = Column(Float)  # 营收增长率
     profit_growth = Column(Float)  # 净利润增长率
