@@ -1,6 +1,7 @@
 """
 因子矩阵V2 API - 01矩阵设计
 """
+import json
 from fastapi import APIRouter, Query
 from typing import Optional, List
 
@@ -193,6 +194,90 @@ async def run_parallel_experiments(
     )
     
     return result
+
+
+@router.get("/best-combinations")
+async def list_best_combinations(
+    stock_code: Optional[str] = Query(None, description="股票代码筛选"),
+    limit: int = Query(20, ge=1, le=100, description="返回数量")
+):
+    """
+    获取最佳因子组合列表
+    
+    按综合得分排序，返回历史最优因子组合
+    """
+    from app.database import SessionLocal
+    from app.models.factor_matrix import BestFactorCombination
+    from sqlalchemy import desc
+    
+    db = SessionLocal()
+    try:
+        query = db.query(BestFactorCombination).filter(BestFactorCombination.is_active == True)
+        
+        if stock_code:
+            query = query.filter(BestFactorCombination.stock_code == stock_code)
+        
+        query = query.order_by(desc(BestFactorCombination.composite_score)).limit(limit)
+        records = query.all()
+        
+        results = []
+        for r in records:
+            results.append({
+                "id": r.id,
+                "combination_code": r.combination_code,
+                "stock_code": r.stock_code,
+                "stock_name": r.stock_name,
+                "strategy_desc": r.strategy_desc,
+                "factor_combination": json.loads(r.factor_combination) if r.factor_combination else {},
+                "total_return": r.total_return,
+                "sharpe_ratio": r.sharpe_ratio,
+                "composite_score": r.composite_score,
+                "holding_period": r.holding_period,
+                "backtest_date": str(r.backtest_date) if r.backtest_date else None,
+                "created_at": str(r.created_at) if r.created_at else None,
+            })
+        
+        return {"count": len(results), "data": results}
+        
+    finally:
+        db.close()
+
+
+@router.get("/best-combinations/{combination_id}")
+async def get_best_combination(combination_id: int):
+    """获取单个最佳因子组合详情"""
+    from app.database import SessionLocal
+    from app.models.factor_matrix import BestFactorCombination
+    
+    db = SessionLocal()
+    try:
+        record = db.query(BestFactorCombination).filter(
+            BestFactorCombination.id == combination_id
+        ).first()
+        
+        if not record:
+            return {"error": "组合不存在"}
+        
+        return {
+            "id": record.id,
+            "combination_code": record.combination_code,
+            "stock_code": record.stock_code,
+            "stock_name": record.stock_name,
+            "strategy_desc": record.strategy_desc,
+            "factor_combination": json.loads(record.factor_combination) if record.factor_combination else {},
+            "total_return": record.total_return,
+            "sharpe_ratio": record.sharpe_ratio,
+            "max_drawdown": record.max_drawdown,
+            "win_rate": record.win_rate,
+            "trade_count": record.trade_count,
+            "composite_score": record.composite_score,
+            "holding_period": record.holding_period,
+            "backtest_date": str(record.backtest_date) if record.backtest_date else None,
+            "notes": record.notes,
+        }
+        
+    finally:
+        db.close()
 
 
 @router.get("/experiments/list")

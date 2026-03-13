@@ -169,6 +169,80 @@ class VectorizedFactorBacktest:
         return combined
 
 
+def save_best_combinations(
+    stock_code: str,
+    top_results: List[Dict],
+    stock_name: str = None
+) -> int:
+    """
+    保存最佳因子组合到数据库
+    
+    Args:
+        stock_code: 股票代码
+        top_results: Top N结果列表
+        stock_name: 股票名称
+    
+    Returns:
+        保存的记录数
+    """
+    from app.database import SessionLocal
+    from app.models.factor_matrix import BestFactorCombination
+    from datetime import date
+    
+    db = SessionLocal()
+    saved_count = 0
+    
+    try:
+        for r in top_results:
+            # 生成组合唯一标识
+            factors = r['factor_combination']
+            factor_keys = sorted([k for k, v in factors.items() if v == 1])
+            combination_code = f"{stock_code}:{':'.join(factor_keys)}"
+            
+            # 检查是否已存在
+            existing = db.query(BestFactorCombination).filter(
+                BestFactorCombination.combination_code == combination_code
+            ).first()
+            
+            if existing:
+                # 更新现有记录
+                existing.total_return = r['total_return']
+                existing.sharpe_ratio = r['sharpe_ratio']
+                existing.composite_score = r['composite_score']
+                existing.backtest_date = date.today()
+                existing.is_active = True
+            else:
+                # 创建新记录
+                record = BestFactorCombination(
+                    combination_code=combination_code,
+                    stock_code=stock_code,
+                    stock_name=stock_name or stock_code,
+                    factor_combination=json.dumps(r['factor_combination']),
+                    strategy_desc=r['strategy'],
+                    total_return=r['total_return'],
+                    sharpe_ratio=r['sharpe_ratio'],
+                    composite_score=r['composite_score'],
+                    holding_period=r['time'],
+                    backtest_date=date.today(),
+                    is_active=True,
+                    notes=f"experiment_code: {r['experiment_code']}, type: {r.get('experiment_type', 'single')}"
+                )
+                db.add(record)
+            
+            saved_count += 1
+        
+        db.commit()
+        print(f"[最佳组合] 保存 {saved_count} 条记录")
+        
+    except Exception as e:
+        db.rollback()
+        print(f"[最佳组合] 保存失败: {e}")
+    finally:
+        db.close()
+    
+    return saved_count
+
+
 def run_vectorized_factor_matrix(
     stock_code: str,
     top_n: int = 10,
@@ -366,12 +440,15 @@ def run_vectorized_factor_matrix(
             db.add(exp_record)
         
         db.commit()
-        print(f"[向量化回测] 保存 Top {len(top_results)} 结果")
+        print(f"[向量化回测] 保存 Top {len(top_results)} 结果到 FactorExperiment")
     except Exception as e:
         db.rollback()
         print(f"[向量化回测] 保存失败: {e}")
     finally:
         db.close()
+    
+    # 7. 保存到最佳因子组合表
+    save_best_combinations(stock_code, top_results)
     
     return {
         'stock_code': stock_code,
