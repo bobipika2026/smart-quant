@@ -84,34 +84,40 @@ class FactorContribution(Base):
 
 
 class BestFactorCombination(Base):
-    """最佳因子组合表 - 存储历史最优组合"""
+    """最佳因子组合表 - 每只股票只保存Top 3"""
     __tablename__ = "best_factor_combinations"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    combination_code = Column(String(100), unique=True)  # 组合唯一标识
+    combination_code = Column(String(100), unique=True, nullable=False)
     
     # 股票信息
-    stock_code = Column(String(10))
+    stock_code = Column(String(10), nullable=False, index=True)
     stock_name = Column(String(50))
     
-    # 因子组合（JSON）
-    factor_combination = Column(Text)  # {"ma_5_20": 1, "macd_default": 1, "period_6m": 1}
-    strategy_desc = Column(String(200))  # 策略描述 "MA(10,20)+RSI(80)(OR)"
+    # 因子组合
+    strategy_desc = Column(String(200))  # "MA(10,20)+RSI(80)(OR)"
+    factor_combination = Column(Text)  # JSON
+    active_factors = Column(Text)  # 启用的因子列表
+    
+    # 排名（该股票内的排名 1/2/3）
+    rank_in_stock = Column(Integer, default=1, index=True)
     
     # 回测结果
-    total_return = Column(Float)  # 总收益率%
-    sharpe_ratio = Column(Float)  # 夏普比率
-    max_drawdown = Column(Float)  # 最大回撤%
-    win_rate = Column(Float)  # 胜率%
-    trade_count = Column(Integer)  # 交易次数
-    composite_score = Column(Float)  # 综合得分
+    total_return = Column(Float)
+    sharpe_ratio = Column(Float)
+    max_drawdown = Column(Float)
+    win_rate = Column(Float)
+    trade_count = Column(Integer)
+    composite_score = Column(Float, index=True)
     
     # 时间因子
-    holding_period = Column(String(20))  # 持仓周期
+    holding_period = Column(String(20))
+    start_date = Column(Date)
+    end_date = Column(Date)
     
     # 元数据
-    backtest_date = Column(Date)  # 回测日期
+    backtest_date = Column(Date)
     created_at = Column(DateTime, default=datetime.now)
-    is_active = Column(Boolean, default=True)  # 是否有效
-    
-    notes = Column(String(500))  # 备注
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    is_active = Column(Boolean, default=True)
+    notes = Column(String(500))

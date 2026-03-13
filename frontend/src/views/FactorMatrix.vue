@@ -1,358 +1,244 @@
 <template>
   <div class="factor-matrix">
-    <n-card title="因子矩阵" class="mb-4">
+    <!-- 最佳因子组合卡片 -->
+    <n-card title="🏆 最佳因子组合" class="mb-4">
       <template #header-extra>
         <n-space>
-          <n-select
-            v-model:value="selectedStrategy"
-            :options="strategyOptions"
-            placeholder="策略筛选"
-            clearable
-            style="width: 150px"
-          />
-          <n-select
-            v-model:value="selectedIndustry"
-            :options="industryOptions"
-            placeholder="行业筛选"
-            clearable
-            style="width: 150px"
-          />
+          <n-button @click="runBacktest" type="primary" :loading="loading">
+            运行回测
+          </n-button>
+          <n-input v-model:value="searchStock" placeholder="搜索股票" style="width: 120px" clearable />
         </n-space>
       </template>
 
-      <!-- 统计卡片 -->
+      <!-- 统计 -->
       <n-grid :cols="4" :x-gap="16" class="mb-4">
         <n-gi>
-          <n-statistic label="总回测次数" :value="statistics.total_records" />
+          <n-statistic label="股票数量" :value="statistics.stock_count || 0" />
         </n-gi>
         <n-gi>
-          <n-statistic label="平均收益" :value="statistics.avg_return || 0">
+          <n-statistic label="总组合数" :value="statistics.total_combinations || 0" />
+        </n-gi>
+        <n-gi>
+          <n-statistic label="平均收益" :value="statistics.avg_return?.toFixed(1) || 0">
             <template #suffix>%</template>
           </n-statistic>
         </n-gi>
         <n-gi>
-          <n-statistic label="平均夏普" :value="statistics.avg_sharpe || 0" />
-        </n-gi>
-        <n-gi>
-          <n-statistic label="策略数量" :value="statistics.strategy_distribution?.length || 0" />
+          <n-statistic label="最高夏普" :value="statistics.max_sharpe?.toFixed(2) || 0" />
         </n-gi>
       </n-grid>
-    </n-card>
 
-    <!-- 因子矩阵表格 -->
-    <n-card title="回测记录" class="mb-4">
+      <!-- 最佳组合表格 -->
       <n-data-table
         :columns="columns"
-        :data="matrixData"
+        :data="filteredData"
         :pagination="pagination"
-        :loading="loading"
+        :row-class-name="rowClass"
         striped
       />
     </n-card>
 
-    <!-- 因子分析 -->
-    <n-grid :cols="2" :x-gap="16">
-      <!-- 策略因子分析 -->
-      <n-gi>
-        <n-card title="策略收益对比">
-          <div ref="strategyChartRef" style="height: 300px"></div>
-        </n-card>
-      </n-gi>
-
-      <!-- 行业因子分析 -->
-      <n-gi>
-        <n-card title="行业收益对比">
-          <div ref="industryChartRef" style="height: 300px"></div>
-        </n-card>
-      </n-gi>
-    </n-grid>
+    <!-- 收益分布图 -->
+    <n-card title="收益分布" class="mb-4">
+      <div ref="chartRef" style="height: 300px"></div>
+    </n-card>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
-import { NCard, NDataTable, NStatistic, NGrid, NGi, NSpace, NSelect, NTag, useMessage } from 'naive-ui'
+import { ref, computed, onMounted, nextTick } from 'vue'
+import { NCard, NDataTable, NStatistic, NGrid, NGi, NSpace, NButton, NInput, NTag, useMessage } from 'naive-ui'
 import * as echarts from 'echarts'
 
 const message = useMessage()
 
 // 数据
 const loading = ref(false)
+const searchStock = ref('')
+const bestCombinations = ref([])
 const statistics = ref({})
-const matrixData = ref([])
-const selectedStrategy = ref(null)
-const selectedIndustry = ref(null)
-const strategyAnalysis = ref({})
-const industryAnalysis = ref({})
 
-// 图表引用
-const strategyChartRef = ref(null)
-const industryChartRef = ref(null)
-let strategyChart = null
-let industryChart = null
-
-// 分页
-const pagination = ref({
-  pageSize: 20
-})
-
-// 筛选选项
-const strategyOptions = ref([])
-const industryOptions = ref([])
+// 图表
+const chartRef = ref(null)
+let chart = null
 
 // 表格列
 const columns = [
   {
-    title: '策略',
-    key: 'strategy_name',
-    width: 100,
-    fixed: 'left'
+    title: '排名',
+    key: 'rank_in_stock',
+    width: 60,
+    render(row) {
+      const colors = { 1: 'success', 2: 'warning', 3: 'default' }
+      return h(NTag, { type: colors[row.rank_in_stock] || 'default', size: 'small' }, () => `#${row.rank_in_stock}`)
+    }
   },
   {
     title: '股票',
     key: 'stock_code',
-    width: 80
-  },
-  {
-    title: '行业',
-    key: 'industry',
-    width: 80,
-    render(row) {
-      return row.industry || '-'
-    }
-  },
-  {
-    title: '市值',
-    key: 'market_cap_level',
-    width: 60,
-    render(row) {
-      const levelMap = { '大盘': 'success', '中盘': 'warning', '小盘': 'error' }
-      return row.market_cap_level ? 
-        h(NTag, { type: levelMap[row.market_cap_level] || 'default', size: 'small' }, () => row.market_cap_level) : '-'
-    }
-  },
-  {
-    title: '参数',
-    key: 'params',
     width: 100,
     render(row) {
-      if (row.param_short && row.param_long) {
-        return `${row.param_short}/${row.param_long}`
-      }
-      return '-'
+      return `${row.stock_code} ${row.stock_name || ''}`
     }
+  },
+  {
+    title: '策略组合',
+    key: 'strategy_desc',
+    ellipsis: { tooltip: true }
   },
   {
     title: '收益',
     key: 'total_return',
-    width: 80,
+    width: 100,
+    sorter: (a, b) => (a.total_return || 0) - (b.total_return || 0),
     render(row) {
-      const val = row.total_return
+      const val = row.total_return || 0
       const color = val >= 0 ? '#18a058' : '#d03050'
-      return h('span', { style: { color, fontWeight: 'bold' } }, `${val?.toFixed(2)}%`)
+      return h('span', { style: { color, fontWeight: 'bold' } }, `${val.toFixed(2)}%`)
     }
   },
   {
     title: '夏普',
     key: 'sharpe_ratio',
-    width: 70,
+    width: 80,
+    sorter: (a, b) => (a.sharpe_ratio || 0) - (b.sharpe_ratio || 0),
     render(row) {
-      return row.sharpe_ratio?.toFixed(2) || '-'
+      return (row.sharpe_ratio || 0).toFixed(2)
     }
   },
   {
-    title: '最大回撤',
-    key: 'max_drawdown',
-    width: 90,
+    title: '综合得分',
+    key: 'composite_score',
+    width: 100,
+    defaultSortOrder: 'descend',
+    sorter: (a, b) => (a.composite_score || 0) - (b.composite_score || 0),
     render(row) {
-      return `${row.max_drawdown?.toFixed(2)}%`
+      return (row.composite_score || 0).toFixed(1)
     }
   },
   {
-    title: '胜率',
-    key: 'win_rate',
-    width: 70,
-    render(row) {
-      return `${row.win_rate?.toFixed(1)}%`
-    }
-  },
-  {
-    title: '交易次数',
-    key: 'trade_count',
-    width: 80
-  },
-  {
-    title: '时间',
-    key: 'created_at',
-    width: 150
+    title: '持仓周期',
+    key: 'holding_period',
+    width: 100
   }
 ]
 
-// 获取统计信息
-async function fetchStatistics() {
+// 筛选后的数据
+const filteredData = computed(() => {
+  if (!searchStock.value) return bestCombinations.value
+  const keyword = searchStock.value.toLowerCase()
+  return bestCombinations.value.filter(r => 
+    r.stock_code?.toLowerCase().includes(keyword) ||
+    r.stock_name?.toLowerCase().includes(keyword)
+  )
+})
+
+// 分页
+const pagination = ref({
+  pageSize: 20,
+  showSizePicker: true,
+  pageSizes: [10, 20, 50, 100]
+})
+
+// 行样式
+const rowClass = (row) => {
+  return row.rank_in_stock === 1 ? 'best-row' : ''
+}
+
+// 获取数据
+async function fetchData() {
   try {
-    const res = await fetch('/api/factor-matrix/statistics')
-    statistics.value = await res.json()
+    const res = await fetch('/api/factor-matrix-v2/best-combinations?limit=500')
+    const data = await res.json()
+    bestCombinations.value = data.data || []
     
-    // 更新筛选选项
-    strategyOptions.value = (statistics.value.strategy_distribution || []).map(s => ({
-      label: s.name,
-      value: s.name
-    }))
-    industryOptions.value = (statistics.value.industry_distribution || []).map(s => ({
-      label: s.name,
-      value: s.name
-    }))
+    // 计算统计
+    if (bestCombinations.value.length > 0) {
+      const stocks = new Set(bestCombinations.value.map(r => r.stock_code))
+      statistics.value = {
+        stock_count: stocks.size,
+        total_combinations: bestCombinations.value.length,
+        avg_return: bestCombinations.value.reduce((s, r) => s + (r.total_return || 0), 0) / bestCombinations.value.length,
+        max_sharpe: Math.max(...bestCombinations.value.map(r => r.sharpe_ratio || 0))
+      }
+    }
+    
+    await nextTick()
+    renderChart()
+    
   } catch (e) {
-    console.error('获取统计失败:', e)
+    console.error('获取数据失败:', e)
   }
 }
 
-// 获取因子矩阵
-async function fetchMatrix() {
+// 运行回测
+async function runBacktest() {
   loading.value = true
+  message.loading('正在运行回测...')
+  
   try {
-    const params = new URLSearchParams({ limit: 100 })
-    if (selectedStrategy.value) {
-      params.append('strategy_id', selectedStrategy.value)
-    }
-    if (selectedIndustry.value) {
-      params.append('industry', selectedIndustry.value)
-    }
-    
-    const res = await fetch(`/api/factor-matrix/matrix?${params}`)
+    const res = await fetch('/api/factor-matrix-v2/experiments/parallel-run?stock_code=000001&num_agents=4', {
+      method: 'POST'
+    })
     const data = await res.json()
-    matrixData.value = data.data || []
+    
+    if (data.error) {
+      message.error(data.error)
+    } else {
+      message.success(`完成! Top 10 已保存`)
+      await fetchData()
+    }
   } catch (e) {
-    console.error('获取矩阵失败:', e)
+    message.error('回测失败: ' + e.message)
   } finally {
     loading.value = false
   }
 }
 
-// 获取因子分析
-async function fetchAnalysis() {
-  try {
-    const [strategyRes, industryRes] = await Promise.all([
-      fetch('/api/factor-matrix/analyze/strategy_name'),
-      fetch('/api/factor-matrix/analyze/industry')
-    ])
-    strategyAnalysis.value = await strategyRes.json()
-    industryAnalysis.value = await industryRes.json()
-    
-    await nextTick()
-    renderCharts()
-  } catch (e) {
-    console.error('获取分析失败:', e)
-  }
-}
-
 // 渲染图表
-function renderCharts() {
-  // 策略收益图表
-  if (strategyChartRef.value) {
-    if (!strategyChart) {
-      strategyChart = echarts.init(strategyChartRef.value)
-    }
-    
-    const data = strategyAnalysis.value.top_performers || []
-    strategyChart.setOption({
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' }
-      },
-      grid: {
-        left: '3%',
-        right: '4%',
-        bottom: '3%',
-        containLabel: true
-      },
-      xAxis: {
-        type: 'category',
-        data: data.map(d => d.factor_value),
-        axisLabel: { rotate: 30 }
-      },
-      yAxis: {
-        type: 'value',
-        name: '收益(%)'
-      },
-      series: [{
-        name: '平均收益',
-        type: 'bar',
-        data: data.map(d => ({
-          value: d.avg_return,
-          itemStyle: { color: d.avg_return >= 0 ? '#18a058' : '#d03050' }
-        })),
-        label: {
-          show: true,
-          position: 'top',
-          formatter: '{c}%'
-        }
-      }]
-    })
+function renderChart() {
+  if (!chartRef.value) return
+  
+  if (!chart) {
+    chart = echarts.init(chartRef.value)
   }
   
-  // 行业收益图表
-  if (industryChartRef.value) {
-    if (!industryChart) {
-      industryChart = echarts.init(industryChartRef.value)
+  // 按股票分组，取每个股票的最佳收益
+  const stockReturns = {}
+  bestCombinations.value.forEach(r => {
+    if (r.rank_in_stock === 1) {
+      stockReturns[r.stock_code] = r.total_return || 0
     }
-    
-    const data = industryAnalysis.value.top_performers || []
-    industryChart.setOption({
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' }
-      },
-      grid: {
-        left: '3%',
-        right: '4%',
-        bottom: '3%',
-        containLabel: true
-      },
-      xAxis: {
-        type: 'category',
-        data: data.map(d => d.factor_value),
-        axisLabel: { rotate: 30 }
-      },
-      yAxis: {
-        type: 'value',
-        name: '收益(%)'
-      },
-      series: [{
-        name: '平均收益',
-        type: 'bar',
-        data: data.map(d => ({
-          value: d.avg_return,
-          itemStyle: { color: d.avg_return >= 0 ? '#18a058' : '#d03050' }
-        })),
-        label: {
-          show: true,
-          position: 'top',
-          formatter: '{c}%'
-        }
-      }]
-    })
-  }
+  })
+  
+  const sorted = Object.entries(stockReturns).sort((a, b) => b[1] - a[1]).slice(0, 20)
+  
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: sorted.map(s => s[0]),
+      axisLabel: { rotate: 45 }
+    },
+    yAxis: {
+      type: 'value',
+      name: '收益率(%)'
+    },
+    series: [{
+      name: '最佳收益',
+      type: 'bar',
+      data: sorted.map(s => ({
+        value: s[1].toFixed(2),
+        itemStyle: { color: s[1] >= 0 ? '#18a058' : '#d03050' }
+      }))
+    }]
+  })
 }
 
-// 监听筛选变化
-watch([selectedStrategy, selectedIndustry], () => {
-  fetchMatrix()
-})
-
 // 初始化
-onMounted(async () => {
-  await fetchStatistics()
-  await fetchMatrix()
-  await fetchAnalysis()
-})
-
-// 窗口大小变化时重新渲染图表
-window.addEventListener('resize', () => {
-  strategyChart?.resize()
-  industryChart?.resize()
-})
+onMounted(fetchData)
 
 // h 函数
 import { h } from 'vue'
@@ -365,5 +251,13 @@ import { h } from 'vue'
 
 .mb-4 {
   margin-bottom: 16px;
+}
+
+:deep(.best-row) {
+  background-color: rgba(24, 160, 88, 0.1);
+}
+
+:deep(.best-row:hover td) {
+  background-color: rgba(24, 160, 88, 0.15) !important;
 }
 </style>

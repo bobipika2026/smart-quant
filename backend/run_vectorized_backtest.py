@@ -172,15 +172,17 @@ class VectorizedFactorBacktest:
 def save_best_combinations(
     stock_code: str,
     top_results: List[Dict],
-    stock_name: str = None
+    stock_name: str = None,
+    max_per_stock: int = 3
 ) -> int:
     """
-    保存最佳因子组合到数据库
+    保存最佳因子组合到数据库（每只股票只保存 Top N）
     
     Args:
         stock_code: 股票代码
         top_results: Top N结果列表
         stock_name: 股票名称
+        max_per_stock: 每只股票最多保存几条
     
     Returns:
         保存的记录数
@@ -193,46 +195,39 @@ def save_best_combinations(
     saved_count = 0
     
     try:
-        for r in top_results:
+        # 先将该股票的旧记录标记为无效
+        db.query(BestFactorCombination).filter(
+            BestFactorCombination.stock_code == stock_code
+        ).update({"is_active": False})
+        
+        # 只保存前 max_per_stock 个
+        for rank, r in enumerate(top_results[:max_per_stock], 1):
             # 生成组合唯一标识
             factors = r['factor_combination']
             factor_keys = sorted([k for k, v in factors.items() if v == 1])
             combination_code = f"{stock_code}:{':'.join(factor_keys)}"
             
-            # 检查是否已存在
-            existing = db.query(BestFactorCombination).filter(
-                BestFactorCombination.combination_code == combination_code
-            ).first()
-            
-            if existing:
-                # 更新现有记录
-                existing.total_return = r['total_return']
-                existing.sharpe_ratio = r['sharpe_ratio']
-                existing.composite_score = r['composite_score']
-                existing.backtest_date = date.today()
-                existing.is_active = True
-            else:
-                # 创建新记录
-                record = BestFactorCombination(
-                    combination_code=combination_code,
-                    stock_code=stock_code,
-                    stock_name=stock_name or stock_code,
-                    factor_combination=json.dumps(r['factor_combination']),
-                    strategy_desc=r['strategy'],
-                    total_return=r['total_return'],
-                    sharpe_ratio=r['sharpe_ratio'],
-                    composite_score=r['composite_score'],
-                    holding_period=r['time'],
-                    backtest_date=date.today(),
-                    is_active=True,
-                    notes=f"experiment_code: {r['experiment_code']}, type: {r.get('experiment_type', 'single')}"
-                )
-                db.add(record)
-            
+            # 创建新记录
+            record = BestFactorCombination(
+                combination_code=combination_code,
+                stock_code=stock_code,
+                stock_name=stock_name or stock_code,
+                factor_combination=json.dumps(r['factor_combination']),
+                strategy_desc=r['strategy'],
+                rank_in_stock=rank,
+                total_return=r['total_return'],
+                sharpe_ratio=r['sharpe_ratio'],
+                composite_score=r['composite_score'],
+                holding_period=r['time'],
+                backtest_date=date.today(),
+                is_active=True,
+                notes=f"experiment_code: {r['experiment_code']}, type: {r.get('experiment_type', 'single')}"
+            )
+            db.add(record)
             saved_count += 1
         
         db.commit()
-        print(f"[最佳组合] 保存 {saved_count} 条记录")
+        print(f"[最佳组合] 保存 {saved_count} 条记录 (每股票最多{max_per_stock}条)")
         
     except Exception as e:
         db.rollback()
