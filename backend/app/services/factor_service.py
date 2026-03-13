@@ -375,6 +375,15 @@ class FactorService:
         all_factors.update(sentiment)
         all_factors.update(technical)
         
+        # 获取行业信息
+        try:
+            df = await asyncio.to_thread(ak.stock_individual_info_em, symbol=stock_code)
+            if df is not None and len(df) > 0:
+                info = dict(zip(df['item'], df['value']))
+                all_factors['industry'] = info.get('行业')
+        except:
+            pass
+        
         return all_factors
     
     # ==================== 因子存储 ====================

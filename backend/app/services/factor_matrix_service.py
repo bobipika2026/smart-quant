@@ -10,6 +10,7 @@ from sqlalchemy import func, desc
 
 from app.database import SessionLocal
 from app.models.factor import FactorBacktest, FactorPerformance
+from app.services.factor_service import FactorService
 
 
 class FactorMatrixService:
@@ -39,9 +40,25 @@ class FactorMatrixService:
         """
         db: Session = SessionLocal()
         try:
-            # 获取股票的额外信息（行业、市值等级）
-            industry = await FactorMatrixService._get_industry(stock_code)
-            market_cap_level = await FactorMatrixService._get_market_cap_level(stock_code)
+            # 获取股票的完整因子数据
+            from app.services.data import DataService
+            data_service = DataService()
+            
+            # 获取历史数据用于计算技术因子
+            start_date_str = backtest_result.get('start_date')
+            hist_data = None
+            if start_date_str:
+                try:
+                    hist_data = await data_service.get_stock_history(stock_code, start_date=start_date_str)
+                except:
+                    pass
+            
+            # 获取所有因子
+            all_factors = await FactorService.get_all_factors(stock_code, hist_data)
+            
+            # 提取各类因子
+            industry = all_factors.get('industry') or await FactorMatrixService._get_industry(stock_code)
+            market_cap_level = FactorMatrixService._get_market_cap_level_from_value(all_factors.get('market_cap'))
             
             # 解析参数
             param_short = params.get('short_period') or params.get('fast_period') if params else None
@@ -76,6 +93,25 @@ class FactorMatrixService:
                 stock_name=stock_name,
                 industry=industry,
                 market_cap_level=market_cap_level,
+                
+                # 基本面因子
+                pe=all_factors.get('pe'),
+                pb=all_factors.get('pb'),
+                roe=all_factors.get('roe'),
+                net_profit_margin=all_factors.get('net_profit_margin'),
+                revenue_growth=all_factors.get('revenue_growth'),
+                profit_growth=all_factors.get('profit_growth'),
+                dividend_yield=all_factors.get('dividend_yield'),
+                
+                # 市场因子
+                market_cap=all_factors.get('market_cap'),
+                turnover_rate=all_factors.get('turnover_rate'),
+                volatility_20=all_factors.get('volatility_20'),
+                
+                # 情绪因子
+                north_holdings_ratio=all_factors.get('north_holdings_ratio'),
+                north_5d_change=all_factors.get('north_5d_change'),
+                margin_balance=all_factors.get('margin_balance'),
                 
                 # 时间因子
                 start_date=start_date,
@@ -129,15 +165,22 @@ class FactorMatrixService:
                     market_cap_str = market_cap_str.replace('亿', '').strip()
                 market_cap = float(market_cap_str) if market_cap_str else 0
                 
-                if market_cap >= 1000:
-                    return '大盘'
-                elif market_cap >= 200:
-                    return '中盘'
-                else:
-                    return '小盘'
+                return FactorMatrixService._get_market_cap_level_from_value(market_cap)
         except:
             pass
         return None
+    
+    @staticmethod
+    def _get_market_cap_level_from_value(market_cap: float) -> Optional[str]:
+        """根据市值数值返回市值等级"""
+        if market_cap is None:
+            return None
+        if market_cap >= 1000:
+            return '大盘'
+        elif market_cap >= 200:
+            return '中盘'
+        else:
+            return '小盘'
     
     # ==================== 因子矩阵查询 ====================
     
@@ -188,6 +231,22 @@ class FactorMatrixService:
                     'stock_name': r.stock_name,
                     'industry': r.industry,
                     'market_cap_level': r.market_cap_level,
+                    # 基本面因子
+                    'pe': r.pe,
+                    'pb': r.pb,
+                    'roe': r.roe,
+                    'net_profit_margin': r.net_profit_margin,
+                    'revenue_growth': r.revenue_growth,
+                    'profit_growth': r.profit_growth,
+                    'dividend_yield': r.dividend_yield,
+                    # 市场因子
+                    'market_cap': r.market_cap,
+                    'turnover_rate': r.turnover_rate,
+                    'volatility_20': r.volatility_20,
+                    # 情绪因子
+                    'north_holdings_ratio': r.north_holdings_ratio,
+                    'north_5d_change': r.north_5d_change,
+                    'margin_balance': r.margin_balance,
                     # 时间因子
                     'start_date': r.start_date.strftime('%Y-%m-%d') if r.start_date else None,
                     'end_date': r.end_date.strftime('%Y-%m-%d') if r.end_date else None,
@@ -225,13 +284,30 @@ class FactorMatrixService:
         try:
             # 映射因子名到数据库字段
             factor_map = {
+                # 策略因子
                 'strategy_id': FactorBacktest.strategy_id,
                 'strategy_name': FactorBacktest.strategy_name,
+                # 股票因子
                 'industry': FactorBacktest.industry,
                 'market_cap_level': FactorBacktest.market_cap_level,
+                # 参数因子
                 'param_short': FactorBacktest.param_short_period,
                 'param_long': FactorBacktest.param_long_period,
+                # 基本面因子（分段分析）
+                'pe_range': None,  # 需要特殊处理
+                'pb_range': None,
+                'roe_range': None,
+                # 市场因子（分段分析）
+                'market_cap_range': None,
+                # 情绪因子（分段分析）
+                'north_holdings_ratio_range': None,
             }
+            
+            # 基本面因子分段分析
+            if factor_name in ['pe_range', 'pb_range', 'roe_range']:
+                return FactorMatrixService._analyze_numeric_factor_range(
+                    factor_name.replace('_range', ''), top_n
+                )
             
             if factor_name not in factor_map:
                 return {'error': f'不支持的因子: {factor_name}'}
@@ -371,6 +447,83 @@ class FactorMatrixService:
             
         except Exception as e:
             print(f"[因子矩阵] 统计失败: {e}")
+            return {'error': str(e)}
+        finally:
+            db.close()
+    
+    # ==================== 数值型因子分段分析 ====================
+    
+    @staticmethod
+    def _analyze_numeric_factor_range(factor_name: str, top_n: int = 10) -> Dict:
+        """
+        分析数值型因子的分段收益表现
+        将因子值分成几段，分析每段的收益表现
+        """
+        db: Session = SessionLocal()
+        try:
+            # 映射因子名到数据库字段
+            factor_col_map = {
+                'pe': FactorBacktest.pe,
+                'pb': FactorBacktest.pb,
+                'roe': FactorBacktest.roe,
+                'market_cap': FactorBacktest.market_cap,
+                'north_holdings_ratio': FactorBacktest.north_holdings_ratio,
+            }
+            
+            if factor_name not in factor_col_map:
+                return {'error': f'不支持的因子: {factor_name}'}
+            
+            factor_col = factor_col_map[factor_name]
+            
+            # 获取所有记录
+            records = db.query(
+                factor_col,
+                FactorBacktest.total_return,
+                FactorBacktest.sharpe_ratio
+            ).filter(
+                factor_col.isnot(None),
+                FactorBacktest.total_return.isnot(None)
+            ).all()
+            
+            if len(records) < 5:
+                return {'error': '样本数量不足'}
+            
+            # 转换为DataFrame
+            df = pd.DataFrame([(r[0], r[1], r[2]) for r in records], 
+                            columns=['factor_value', 'total_return', 'sharpe_ratio'])
+            
+            # 分段（分4段）
+            try:
+                df['range'] = pd.qcut(df['factor_value'], q=4, labels=['低', '中低', '中高', '高'], duplicates='drop')
+            except:
+                # 如果值太少，分2段
+                df['range'] = pd.cut(df['factor_value'], bins=2, labels=['低', '高'])
+            
+            # 按段统计
+            results = []
+            for range_name in df['range'].unique():
+                if pd.isna(range_name):
+                    continue
+                subset = df[df['range'] == range_name]
+                results.append({
+                    'factor_value': f'{factor_name}_{range_name}',
+                    'range': range_name,
+                    'sample_count': len(subset),
+                    'avg_return': round(subset['total_return'].mean(), 2),
+                    'avg_sharpe': round(subset['sharpe_ratio'].mean(), 2) if subset['sharpe_ratio'].notna().any() else None,
+                })
+            
+            # 按收益排序
+            results.sort(key=lambda x: x['avg_return'] or 0, reverse=True)
+            
+            return {
+                'factor_name': factor_name,
+                'total_values': len(results),
+                'ranges': results,
+            }
+            
+        except Exception as e:
+            print(f"[因子矩阵] 分段分析失败: {e}")
             return {'error': str(e)}
         finally:
             db.close()

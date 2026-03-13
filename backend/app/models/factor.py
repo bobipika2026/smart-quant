@@ -110,6 +110,25 @@ class FactorBacktest(Base):
     industry = Column(String(50))  # 行业
     market_cap_level = Column(String(20))  # 市值等级（大盘/中盘/小盘）
     
+    # 基本面因子
+    pe = Column(Float)  # 市盈率
+    pb = Column(Float)  # 市净率
+    roe = Column(Float)  # 净资产收益率
+    net_profit_margin = Column(Float)  # 净利润率
+    revenue_growth = Column(Float)  # 营收增长率
+    profit_growth = Column(Float)  # 净利润增长率
+    dividend_yield = Column(Float)  # 股息率
+    
+    # 市场因子
+    market_cap = Column(Float)  # 总市值（亿）
+    turnover_rate = Column(Float)  # 换手率
+    volatility_20 = Column(Float)  # 20日波动率
+    
+    # 情绪因子
+    north_holdings_ratio = Column(Float)  # 北向资金持股占比（%）
+    north_5d_change = Column(Float)  # 北向资金5日增持幅度（%）
+    margin_balance = Column(Float)  # 融资余额（亿元）
+    
     # 时间因子
     start_date = Column(Date)
     end_date = Column(Date)

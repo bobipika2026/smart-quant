@@ -105,6 +105,26 @@ async def list_available_factors():
                 "name": "param_long",
                 "description": "长周期参数",
                 "type": "numeric"
+            },
+            {
+                "name": "pe_range",
+                "description": "市盈率分段（低/中低/中高/高）",
+                "type": "numeric_range"
+            },
+            {
+                "name": "pb_range",
+                "description": "市净率分段",
+                "type": "numeric_range"
+            },
+            {
+                "name": "roe_range",
+                "description": "净资产收益率分段",
+                "type": "numeric_range"
+            },
+            {
+                "name": "market_cap_range",
+                "description": "市值分段",
+                "type": "numeric_range"
             }
         ]
     }
