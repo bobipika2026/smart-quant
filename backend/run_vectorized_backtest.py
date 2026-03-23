@@ -13,15 +13,16 @@ import json
 class VectorizedFactorBacktest:
     """向量化因子回测引擎"""
     
-    def __init__(self, close: np.ndarray):
+    def __init__(self, df: pd.DataFrame):
         """
         初始化
         
         Args:
-            close: 收盘价数组
+            df: 包含日期和收盘价的DataFrame
         """
-        self.close = close
-        self.n = len(close)
+        self.df = df
+        self.close = df['收盘'].values
+        self.n = len(df)
     
     def calc_ma(self, window: int) -> np.ndarray:
         """计算均线"""
@@ -55,82 +56,62 @@ class VectorizedFactorBacktest:
         rsi = 100 - (100 / (1 + rs))
         return np.concatenate([[50], rsi])  # 补齐长度
     
-    def backtest_strategy(self, signals: np.ndarray) -> Tuple[float, float, int]:
+    def backtest_strategy(self, signals: np.ndarray) -> Dict:
         """
-        回测单个策略
+        回测单个策略 - 使用BacktestEngine保证一致性
         
         Args:
             signals: 信号数组 (1=买入, -1=卖出, 0=持有)
         
         Returns:
-            (总收益率%, 夏普比率, 交易次数)
+            回测结果字典
         """
-        returns = []
-        position = False
-        buy_price = 0
+        from app.services.backtest import BacktestEngine
         
-        for i in range(self.n):
-            if signals[i] == 1 and not position:
-                buy_price = self.close[i]
-                position = True
-            elif signals[i] == -1 and position:
-                ret = (self.close[i] - buy_price) / buy_price
-                returns.append(ret)
-                position = False
+        # 构建DataFrame（使用真实数据）
+        df = self.df.copy()
+        df['signal'] = signals
         
-        # 平仓
-        if position:
-            returns.append((self.close[-1] - buy_price) / buy_price)
+        # 使用BacktestEngine计算
+        engine = BacktestEngine()
+        result = engine.run_backtest(df, signal_col='signal')
         
-        if not returns:
-            return 0, 0, 0
-        
-        total_return = np.prod([1 + r for r in returns]) - 1
-        sharpe = np.mean(returns) / (np.std(returns) + 1e-10) * np.sqrt(252) if len(returns) > 1 else 0
-        
-        return total_return * 100, sharpe, len(returns)
+        return {
+            'total_return': result.get('total_return', 0),
+            'annual_return': result.get('annual_return'),
+            'sharpe_ratio': result.get('sharpe_ratio', 0),
+            'max_drawdown': result.get('max_drawdown'),
+            'win_rate': result.get('win_rate'),
+            'profit_loss_ratio': result.get('profit_loss_ratio'),
+            'trade_count': result.get('trade_count', 0)
+        }
     
     def generate_ma_signals(self, short: int, long: int) -> np.ndarray:
-        """生成MA金叉信号"""
-        ma_short = self.calc_ma(short)
-        ma_long = self.calc_ma(long)
+        """生成MA金叉信号 - 使用回测引擎的策略"""
+        from app.services.strategy import MAStrategy
         
-        signals = np.zeros(self.n)
-        
-        for i in range(1, self.n):
-            if not np.isnan(ma_short[i]) and not np.isnan(ma_long[i]):
-                if ma_short[i] > ma_long[i] and ma_short[i-1] <= ma_long[i-1]:
-                    signals[i] = 1  # 金叉买入
-                elif ma_short[i] < ma_long[i] and ma_short[i-1] >= ma_long[i-1]:
-                    signals[i] = -1  # 死叉卖出
-        
-        return signals
+        df = self.df.copy()
+        strategy = MAStrategy(short_period=short, long_period=long)
+        df_signal = strategy.generate_signals(df)
+        return df_signal['signal'].values
     
     def generate_macd_signals(self, fast=12, slow=26, signal=9) -> np.ndarray:
-        """生成MACD信号"""
-        _, signal_line, hist = self.calc_macd(fast, slow, signal)
+        """生成MACD信号 - 使用回测引擎的策略"""
+        from app.services.strategy import MACDStrategy
         
-        signals = np.zeros(self.n)
-        for i in range(1, self.n):
-            if hist[i] > 0 and hist[i-1] <= 0:
-                signals[i] = 1
-            elif hist[i] < 0 and hist[i-1] >= 0:
-                signals[i] = -1
-        
-        return signals
+        df = self.df.copy()
+        strategy = MACDStrategy(fast=fast, slow=slow, signal=signal)
+        df_signal = strategy.generate_signals(df)
+        return df_signal['signal'].values
     
     def generate_rsi_signals(self, period=14, upper=70, lower=30) -> np.ndarray:
-        """生成RSI信号"""
-        rsi = self.calc_rsi(period)
+        """生成RSI信号 - 使用回测引擎的策略"""
+        from app.services.strategy import RSIStrategy
         
-        signals = np.zeros(self.n)
-        for i in range(1, self.n):
-            if rsi[i] < lower and rsi[i-1] >= lower:
-                signals[i] = 1  # 超卖买入
-            elif rsi[i] > upper and rsi[i-1] <= upper:
-                signals[i] = -1  # 超买卖出
-        
-        return signals
+        df = self.df.copy()
+        strategy = RSIStrategy(period=period, oversold=lower, overbought=upper)
+        df_signal = strategy.generate_signals(df)
+        return df_signal['signal'].values
     
     def combine_signals(self, signal_list: List[np.ndarray], mode='and') -> np.ndarray:
         """
@@ -173,7 +154,8 @@ def save_best_combinations(
     stock_code: str,
     top_results: List[Dict],
     stock_name: str = None,
-    max_per_stock: int = 3
+    max_per_stock: int = 3,
+    benchmark_return: float = None
 ) -> int:
     """
     保存最佳因子组合到数据库（每只股票只保存 Top N）
@@ -183,6 +165,7 @@ def save_best_combinations(
         top_results: Top N结果列表
         stock_name: 股票名称
         max_per_stock: 每只股票最多保存几条
+        benchmark_return: 基准收益（买入持有）
     
     Returns:
         保存的记录数
@@ -195,10 +178,11 @@ def save_best_combinations(
     saved_count = 0
     
     try:
-        # 先将该股票的旧记录标记为无效
+        # 先删除该股票的所有旧记录（避免combination_code唯一约束冲突）
         db.query(BestFactorCombination).filter(
             BestFactorCombination.stock_code == stock_code
-        ).update({"is_active": False})
+        ).delete()
+        db.commit()  # 立即提交删除
         
         # 只保存前 max_per_stock 个
         for rank, r in enumerate(top_results[:max_per_stock], 1):
@@ -216,7 +200,13 @@ def save_best_combinations(
                 strategy_desc=r['strategy'],
                 rank_in_stock=rank,
                 total_return=r['total_return'],
+                annual_return=r.get('annual_return'),
+                benchmark_return=benchmark_return,
                 sharpe_ratio=r['sharpe_ratio'],
+                max_drawdown=r.get('max_drawdown'),
+                win_rate=r.get('win_rate'),
+                profit_loss_ratio=r.get('profit_loss_ratio'),
+                trade_count=r['trade_count'],
                 composite_score=r['composite_score'],
                 holding_period=r['time'],
                 backtest_date=date.today(),
@@ -260,39 +250,58 @@ def run_vectorized_factor_matrix(
     print(f"[向量化回测] 股票: {stock_code}")
     
     # 1. 加载本地数据
-    cache_file = f'data_cache/{stock_code}_history.csv'
+    cache_file = f'data_cache/day/{stock_code}_day.csv'
     df = pd.read_csv(cache_file)
-    close = df['收盘'].values
+    # 确保日期格式正确
+    df['日期'] = pd.to_datetime(df['日期'].astype(str))
+    df = df.sort_values('日期').reset_index(drop=True)
     
-    print(f"[向量化回测] 数据: {len(close)} 条")
+    print(f"[向量化回测] 数据: {len(df)} 条")
     
-    # 2. 初始化引擎
-    engine = VectorizedFactorBacktest(close)
+    # 计算基准收益（买入持有）
+    benchmark_return = round((df['收盘'].iloc[-1] / df['收盘'].iloc[0] - 1) * 100, 2)
+    print(f"[向量化回测] 基准收益: {benchmark_return}%")
     
-    # 3. 定义策略因子（12个）
-    strategy_params = {
-        # MA策略
-        'ma_5_20': lambda: engine.generate_ma_signals(5, 20),
-        'ma_5_30': lambda: engine.generate_ma_signals(5, 30),
-        'ma_10_20': lambda: engine.generate_ma_signals(10, 20),
-        'ma_10_30': lambda: engine.generate_ma_signals(10, 30),
-        # MACD策略
-        'macd_default': lambda: engine.generate_macd_signals(12, 26, 9),
-        'macd_fast': lambda: engine.generate_macd_signals(8, 17, 9),
-        # RSI策略
-        'rsi_14_70': lambda: engine.generate_rsi_signals(14, 70, 30),
-        'rsi_14_80': lambda: engine.generate_rsi_signals(14, 80, 20),
-        # KDJ策略（用RSI近似）
-        'kdj_default': lambda: engine.generate_rsi_signals(9, 80, 20),
-        # 布林带（用MA近似）
-        'boll_20_2': lambda: engine.generate_ma_signals(20, 40),
-        # CCI（用RSI近似）
-        'cci_14': lambda: engine.generate_rsi_signals(14, 100, -100),
-        # WR（用RSI反向近似）
-        'wr_14': lambda: engine.generate_rsi_signals(14, 20, 80),
-    }
+    # 2. 初始化引擎（用于信号生成）
+    engine = VectorizedFactorBacktest(df)
     
-    strategy_codes = list(strategy_params.keys())
+    # 3. 定义策略生成函数（不绑定特定engine）
+    def generate_signals_for_strategy(engine_instance, strategy_code):
+        """根据策略代码生成信号 - 使用策略类保证一致性"""
+        from app.services.strategy import get_strategy
+        
+        # 策略ID映射
+        strategy_map = {
+            'ma_5_20': ('ma_cross', {'short_period': 5, 'long_period': 20}),
+            'ma_5_30': ('ma_cross', {'short_period': 5, 'long_period': 30}),
+            'ma_10_20': ('ma_cross', {'short_period': 10, 'long_period': 20}),
+            'ma_10_30': ('ma_cross', {'short_period': 10, 'long_period': 30}),
+            'macd_default': ('macd', {'fast': 12, 'slow': 26, 'signal': 9}),
+            'macd_fast': ('macd', {'fast': 8, 'slow': 17, 'signal': 9}),
+            'rsi_14_70': ('rsi', {'period': 14, 'overbought': 70, 'oversold': 30}),
+            'rsi_14_80': ('rsi', {'period': 14, 'overbought': 80, 'oversold': 20}),
+            'kdj_default': ('kdj', {'n': 9, 'm1': 3, 'm2': 3}),
+            'boll_20_2': ('boll', {'period': 20, 'std_dev': 2}),
+            'cci_14': ('cci', {'period': 14}),
+            'wr_14': ('wr', {'period': 14}),
+        }
+        
+        if strategy_code not in strategy_map:
+            return np.zeros(engine_instance.n)
+        
+        strategy_id, params = strategy_map[strategy_code]
+        
+        # 使用策略类生成信号
+        strategy = get_strategy(strategy_id)
+        strategy.params = params
+        df_signal = strategy.generate_signals(engine_instance.df.copy())
+        
+        return df_signal['signal'].values
+    
+    strategy_codes = ['ma_5_20', 'ma_5_30', 'ma_10_20', 'ma_10_30',
+                      'macd_default', 'macd_fast',
+                      'rsi_14_70', 'rsi_14_80',
+                      'kdj_default', 'boll_20_2', 'cci_14', 'wr_14']
     
     # 时间因子
     time_factors = ['period_3m', 'period_6m', 'period_1y', 'period_2y']
@@ -308,26 +317,31 @@ def run_vectorized_factor_matrix(
     # ===== 单策略实验 =====
     print("[向量化回测] 单策略实验...")
     for strategy_code in strategy_codes:
-        signal_func = strategy_params[strategy_code]
-        signals = signal_func()
-        
         for time_factor, days in zip(time_factors, time_days):
-            end_idx = min(days, len(close))
-            partial_signals = signals[:end_idx]
-            partial_close = close[:end_idx]
+            # 从数据末尾往前取（最近N天）
+            start_idx = max(0, len(df) - days)
+            partial_df = df.iloc[start_idx:].copy()
             
-            sub_engine = VectorizedFactorBacktest(partial_close)
-            ret, sharpe, trades = sub_engine.backtest_strategy(partial_signals)
+            # 对截取后的数据生成信号
+            partial_engine = VectorizedFactorBacktest(partial_df)
+            signals = generate_signals_for_strategy(partial_engine, strategy_code)
             
-            composite = ret * 0.4 + sharpe * 10 * 0.3
+            # 回测
+            result = partial_engine.backtest_strategy(signals)
+            
+            composite = result['total_return'] * 0.4 + result['sharpe_ratio'] * 10 * 0.3
             
             results.append({
-                'experiment_code': f'EXP_{exp_id:06d}',
+                'experiment_code': f'{stock_code}_{exp_id:06d}',
                 'strategy': strategy_code,
                 'time': time_factor,
-                'total_return': ret,
-                'sharpe_ratio': sharpe,
-                'trade_count': trades,
+                'total_return': result['total_return'],
+                'annual_return': result.get('annual_return'),
+                'sharpe_ratio': result['sharpe_ratio'],
+                'max_drawdown': result.get('max_drawdown'),
+                'win_rate': result.get('win_rate'),
+                'profit_loss_ratio': result.get('profit_loss_ratio'),
+                'trade_count': result['trade_count'],
                 'composite_score': composite,
                 'factor_combination': {strategy_code: 1, time_factor: 1},
                 'experiment_type': 'single'
@@ -359,30 +373,36 @@ def run_vectorized_factor_matrix(
         print(f"  有效组合数: {len(valid_pairs)}")
         
         for s1, s2 in valid_pairs:
-            sig1 = strategy_params[s1]()
-            sig2 = strategy_params[s2]()
-            
-            # AND组合
-            combined_and = engine.combine_signals([sig1, sig2], mode='and')
-            # OR组合
-            combined_or = engine.combine_signals([sig1, sig2], mode='or')
-            
             for time_factor, days in zip(time_factors, time_days):
-                end_idx = min(days, len(close))
-                partial_close = close[:end_idx]
-                sub_engine = VectorizedFactorBacktest(partial_close)
+                # 从数据末尾往前取（最近N天）
+                start_idx = max(0, len(df) - days)
+                partial_df = df.iloc[start_idx:].copy()
+                
+                # 对截取后的数据生成信号
+                partial_engine = VectorizedFactorBacktest(partial_df)
+                sig1 = generate_signals_for_strategy(partial_engine, s1)
+                sig2 = generate_signals_for_strategy(partial_engine, s2)
+                
+                # AND组合
+                combined_and = partial_engine.combine_signals([sig1, sig2], mode='and')
+                # OR组合
+                combined_or = partial_engine.combine_signals([sig1, sig2], mode='or')
                 
                 # AND
-                ret_and, sharpe_and, trades_and = sub_engine.backtest_strategy(combined_and[:end_idx])
-                composite_and = ret_and * 0.4 + sharpe_and * 10 * 0.3
+                result_and = partial_engine.backtest_strategy(combined_and)
+                composite_and = result_and['total_return'] * 0.4 + result_and['sharpe_ratio'] * 10 * 0.3
                 
                 results.append({
-                    'experiment_code': f'EXP_{exp_id:06d}',
+                    'experiment_code': f'{stock_code}_{exp_id:06d}',
                     'strategy': f'{s1}+{s2}(AND)',
                     'time': time_factor,
-                    'total_return': ret_and,
-                    'sharpe_ratio': sharpe_and,
-                    'trade_count': trades_and,
+                    'total_return': result_and['total_return'],
+                    'annual_return': result_and.get('annual_return'),
+                    'sharpe_ratio': result_and['sharpe_ratio'],
+                    'max_drawdown': result_and.get('max_drawdown'),
+                    'win_rate': result_and.get('win_rate'),
+                    'profit_loss_ratio': result_and.get('profit_loss_ratio'),
+                    'trade_count': result_and['trade_count'],
                     'composite_score': composite_and,
                     'factor_combination': {s1: 1, s2: 1, time_factor: 1},
                     'experiment_type': 'double_and'
@@ -390,16 +410,20 @@ def run_vectorized_factor_matrix(
                 exp_id += 1
                 
                 # OR
-                ret_or, sharpe_or, trades_or = sub_engine.backtest_strategy(combined_or[:end_idx])
-                composite_or = ret_or * 0.4 + sharpe_or * 10 * 0.3
+                result_or = partial_engine.backtest_strategy(combined_or)
+                composite_or = result_or['total_return'] * 0.4 + result_or['sharpe_ratio'] * 10 * 0.3
                 
                 results.append({
-                    'experiment_code': f'EXP_{exp_id:06d}',
+                    'experiment_code': f'{stock_code}_{exp_id:06d}',
                     'strategy': f'{s1}+{s2}(OR)',
                     'time': time_factor,
-                    'total_return': ret_or,
-                    'sharpe_ratio': sharpe_or,
-                    'trade_count': trades_or,
+                    'total_return': result_or['total_return'],
+                    'annual_return': result_or.get('annual_return'),
+                    'sharpe_ratio': result_or['sharpe_ratio'],
+                    'max_drawdown': result_or.get('max_drawdown'),
+                    'win_rate': result_or.get('win_rate'),
+                    'profit_loss_ratio': result_or.get('profit_loss_ratio'),
+                    'trade_count': result_or['trade_count'],
                     'composite_score': composite_or,
                     'factor_combination': {s1: 1, s2: 1, time_factor: 1},
                     'experiment_type': 'double_or'
@@ -443,7 +467,7 @@ def run_vectorized_factor_matrix(
         db.close()
     
     # 7. 保存到最佳因子组合表
-    save_best_combinations(stock_code, top_results)
+    save_best_combinations(stock_code, top_results, benchmark_return=benchmark_return)
     
     return {
         'stock_code': stock_code,

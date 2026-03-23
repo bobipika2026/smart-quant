@@ -34,8 +34,8 @@
 
     <n-card title="快速操作" style="margin-top: 16px">
       <n-space :size="[8, 8]" wrap>
-        <n-button type="primary" @click="$router.push('/strategy')">
-          📈 管理策略
+        <n-button type="primary" @click="$router.push('/best-factor')">
+          🏆 最佳策略
         </n-button>
         <n-button type="info" @click="$router.push('/backtest')">
           🔄 运行回测
@@ -45,6 +45,15 @@
         </n-button>
         <n-button @click="$router.push('/stock-picker')">
           🔍 智能选股
+        </n-button>
+        <n-button @click="$router.push('/factor-matrix')">
+          📊 因子矩阵
+        </n-button>
+        <n-button type="warning" @click="$router.push('/factor-library')">
+          📚 因子库
+        </n-button>
+        <n-button type="warning" @click="$router.push('/factor-library')">
+          📚 因子库
         </n-button>
       </n-space>
     </n-card>

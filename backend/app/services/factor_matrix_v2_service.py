@@ -212,7 +212,7 @@ class FactorMatrixV2:
                                     factor_combination[f["code"]] = 1 if f["code"] in all_factors else 0
                                 
                                 experiments.append({
-                                    "experiment_code": f"EXP_{exp_id:06d}",
+                                    "experiment_code": f"{stock_code}_{exp_id:06d}",
                                     "stock_code": stock_code,
                                     "factor_combination": factor_combination,
                                     "active_factors": all_factors,
@@ -229,7 +229,7 @@ class FactorMatrixV2:
                                 factor_combination[f["code"]] = 1 if f["code"] in all_factors else 0
                             
                             experiments.append({
-                                "experiment_code": f"EXP_{exp_id:06d}",
+                                "experiment_code": f"{stock_code}_{exp_id:06d}",
                                 "stock_code": stock_code,
                                 "factor_combination": factor_combination,
                                 "active_factors": all_factors,
@@ -286,7 +286,7 @@ class FactorMatrixV2:
                         factor_combination[f["code"]] = 1 if f["code"] in [strategy, time_factor] else 0
                     
                     experiments.append({
-                        "experiment_code": f"EXP_{exp_id:04d}",
+                        "experiment_code": f"{stock_code}_{exp_id:04d}",
                         "stock_code": stock_code,
                         "factor_combination": factor_combination,
                         "active_factors": [strategy, time_factor],
@@ -320,7 +320,7 @@ class FactorMatrixV2:
                         factor_combination[f["code"]] = 1 if f["code"] in all_factors else 0
                     
                     experiments.append({
-                        "experiment_code": f"EXP_{exp_id:04d}",
+                        "experiment_code": f"{stock_code}_{exp_id:04d}",
                         "stock_code": stock_code,
                         "factor_combination": factor_combination,
                         "active_factors": all_factors,
@@ -341,7 +341,7 @@ class FactorMatrixV2:
                                     factor_combination[f["code"]] = 1 if f["code"] in all_factors else 0
                                 
                                 experiments.append({
-                                    "experiment_code": f"EXP_{exp_id:04d}",
+                                    "experiment_code": f"{stock_code}_{exp_id:04d}",
                                     "stock_code": stock_code,
                                     "factor_combination": factor_combination,
                                     "active_factors": all_factors,
@@ -396,59 +396,79 @@ class FactorMatrixV2:
         if hist_data is None:
             from app.services.data import DataService
             data_service = DataService()
-            start_date = (datetime.now() - timedelta(days=holding_days * 2)).strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=holding_days)).strftime('%Y%m%d')
             hist_data = await data_service.get_stock_history(stock_code, start_date=start_date)
         
         if hist_data is None or len(hist_data) < 50:
             return {"error": "数据不足"}
         
-        # 5. 简化处理：只用第一个策略因子执行回测
-        # （完整实现需要组合多个策略的信号）
+        # 5. 执行组合策略回测
         if strategy_factors:
-            # 查找策略配置
-            strategy_config = next((f for f in FactorMatrixV2.STRATEGY_FACTORS if f["code"] == strategy_factors[0]), None)
-            if strategy_config:
-                try:
-                    # 从因子代码提取策略类型
-                    # ma_5_20 -> ma_cross, macd_default -> macd
-                    factor_code = strategy_factors[0]
-                    if factor_code.startswith("ma_"):
-                        strategy_id = "ma_cross"
-                    elif factor_code.startswith("macd"):
-                        strategy_id = "macd"
-                    elif factor_code.startswith("rsi"):
-                        strategy_id = "rsi"
-                    elif factor_code.startswith("kdj"):
-                        strategy_id = "kdj"
-                    elif factor_code.startswith("boll"):
-                        strategy_id = "boll"
-                    elif factor_code.startswith("cci"):
-                        strategy_id = "cci"
-                    elif factor_code.startswith("wr"):
-                        strategy_id = "wr"
-                    else:
-                        strategy_id = factor_code.split("_")[0]
+            import numpy as np
+            
+            signals_list = []
+            strategy_names = []
+            
+            for factor_code in strategy_factors:
+                strategy_config = next((f for f in FactorMatrixV2.STRATEGY_FACTORS if f["code"] == factor_code), None)
+                if not strategy_config:
+                    continue
                     
+                # 提取策略ID
+                if factor_code.startswith("ma_"):
+                    strategy_id = "ma_cross"
+                elif factor_code.startswith("macd"):
+                    strategy_id = "macd"
+                elif factor_code.startswith("rsi"):
+                    strategy_id = "rsi"
+                elif factor_code.startswith("kdj"):
+                    strategy_id = "kdj"
+                elif factor_code.startswith("boll"):
+                    strategy_id = "boll"
+                elif factor_code.startswith("cci"):
+                    strategy_id = "cci"
+                elif factor_code.startswith("wr"):
+                    strategy_id = "wr"
+                else:
+                    strategy_id = factor_code.split("_")[0]
+                
+                try:
                     strategy = get_strategy(strategy_id)
                     if strategy:
                         strategy.params = strategy_config["params"]
-                        df_with_signals = strategy.generate_signals(hist_data)
-                        
-                        engine = BacktestEngine()
-                        results = engine.run_backtest(df_with_signals)
-                        
-                        return {
-                            "experiment_code": experiment["experiment_code"],
-                            "factor_combination": factor_combination,
-                            "active_factors": active_factors,
-                            "total_return": results.get("total_return"),
-                            "sharpe_ratio": results.get("sharpe_ratio"),
-                            "max_drawdown": results.get("max_drawdown"),
-                            "win_rate": results.get("win_rate"),
-                            "trade_count": results.get("trade_count")
-                        }
+                        df_strategy = strategy.generate_signals(hist_data.copy())
+                        if 'signal' in df_strategy.columns:
+                            signals_list.append(df_strategy['signal'].values)
+                            strategy_names.append(strategy.name)
                 except Exception as e:
-                    return {"error": str(e)}
+                    print(f"[因子矩阵] 策略 {strategy_id} 失败: {e}")
+            
+            if not signals_list:
+                return {"error": "无有效策略"}
+            
+            # 组合信号 (OR模式)
+            signals_array = np.array(signals_list)
+            combined_signal = np.sum(signals_array, axis=0)
+            combined_signal = np.clip(combined_signal, -1, 1)
+            
+            # 创建组合信号DataFrame
+            df_combo = hist_data.copy()
+            df_combo['signal'] = combined_signal
+            
+            # 运行回测
+            engine = BacktestEngine()
+            results = engine.run_backtest(df_combo)
+            
+            return {
+                "experiment_code": experiment["experiment_code"],
+                "factor_combination": factor_combination,
+                "active_factors": active_factors,
+                "total_return": results.get("total_return"),
+                "sharpe_ratio": results.get("sharpe_ratio"),
+                "max_drawdown": results.get("max_drawdown"),
+                "win_rate": results.get("win_rate"),
+                "trade_count": results.get("trade_count")
+            }
         
         return {"error": "无策略因子"}
     

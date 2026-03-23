@@ -81,3 +81,15 @@ class BacktestResult(Base):
 
 # 因子模型
 from app.models.factor import FactorValue, FactorBacktest, FactorPerformance
+
+# 因子库模型
+from app.models.factor_library import FactorDefinition, FactorTestResult, FactorCorrelation, FactorParamSensitivity, FactorSelectionResult
+
+# 因子库模型
+from app.models.factor_library import (
+    FactorDefinition, 
+    FactorTestResult, 
+    FactorCorrelation, 
+    FactorParamSensitivity,
+    FactorSelectionResult
+)

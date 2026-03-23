@@ -35,6 +35,21 @@ const routes = [
     path: '/factor-matrix',
     name: 'factor-matrix',
     component: () => import('@/views/FactorMatrix.vue')
+  },
+  {
+    path: '/stock-scoring',
+    name: 'stock-scoring',
+    component: () => import('@/views/StockScoring.vue')
+  },
+  {
+    path: '/best-factor',
+    name: 'best-factor',
+    component: () => import('@/views/BestFactor.vue')
+  },
+  {
+    path: '/factor-library',
+    name: 'factor-library',
+    component: () => import('@/views/FactorLibrary.vue')
   }
 ]
 

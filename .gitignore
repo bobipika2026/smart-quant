@@ -60,3 +60,14 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+
+# Data Cache
+data_cache/
+*.csv
+*.txt
+!requirements.txt
+
+# Temp files
+*.tmp
+backtest_progress.txt
+sync_progress.txt

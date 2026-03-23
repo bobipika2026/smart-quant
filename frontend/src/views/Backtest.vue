@@ -1,6 +1,30 @@
 <template>
   <div class="backtest">
     <n-card title="回测配置">
+      <!-- 组合策略详情 -->
+      <n-alert v-if="isComboMode" type="info" style="margin-bottom: 16px">
+        <template #header>🔗 组合策略模式 ({{ comboStrategyIds.length }}个策略)</template>
+        <div style="margin-top: 8px">
+          <div v-for="(id, index) in comboStrategyIds" :key="id" style="margin-bottom: 8px; display: flex; align-items: center">
+            <n-tag type="primary" size="small">{{ index + 1 }}. {{ strategies.find(s => s.id === id)?.name || id }}</n-tag>
+            <span v-if="comboParams[index]" style="margin-left: 8px; color: #666; font-size: 12px">
+              参数: {{ JSON.stringify(comboParams[index]) }}
+            </span>
+            <n-button size="tiny" type="error" quaternary @click="removeFromCombo(index)" style="margin-left: 8px">
+              移除
+            </n-button>
+          </div>
+          <n-divider style="margin: 8px 0" />
+          <n-space align="center">
+            <span>组合模式:</span>
+            <n-tag :type="comboMode === 'OR' ? 'warning' : 'success'" size="small">{{ comboMode }}</n-tag>
+            <span style="color: #666; font-size: 12px">
+              {{ comboMode === 'OR' ? '任一策略发出信号即执行' : '所有策略同时满足才执行' }}
+            </span>
+          </n-space>
+        </div>
+      </n-alert>
+      
       <n-form :model="form" label-placement="left" label-width="100">
         <n-grid :cols="2" :x-gap="24">
           <n-gi>
@@ -10,7 +34,15 @@
           </n-gi>
           <n-gi>
             <n-form-item label="选择策略">
-              <n-select v-model:value="form.strategyId" :options="strategyOptions" />
+              <n-space>
+                <n-select v-model:value="form.strategyId" :options="strategyOptions" :disabled="isComboMode" style="width: 200px" />
+                <n-button size="small" @click="addStrategyToCombo" :disabled="!form.strategyId">
+                  ➕ 添加到组合
+                </n-button>
+                <n-button v-if="isComboMode" size="small" type="warning" @click="clearCombo">
+                  清空组合
+                </n-button>
+              </n-space>
             </n-form-item>
           </n-gi>
           <n-gi>
@@ -26,9 +58,12 @@
           <n-gi :span="2">
             <n-form-item label="时间范围">
               <n-space>
+                <n-button size="small" @click="setTimeRange(0.25)">3月</n-button>
+                <n-button size="small" @click="setTimeRange(0.5)">6月</n-button>
                 <n-button size="small" @click="setTimeRange(1)">1年</n-button>
+                <n-button size="small" type="primary" @click="setTimeRange(2)">2年</n-button>
                 <n-button size="small" @click="setTimeRange(3)">3年</n-button>
-                <n-button size="small" type="primary" @click="setTimeRange(5)">5年</n-button>
+                <n-button size="small" @click="setTimeRange(5)">5年</n-button>
                 <n-button size="small" @click="setTimeRange(10)">10年</n-button>
                 <n-text depth="3" style="margin-left: 8px">
                   ({{ yearsText }}年)
@@ -43,10 +78,21 @@
               </n-input-number>
             </n-form-item>
           </n-gi>
+          <n-gi v-if="isComboMode">
+            <n-form-item label="组合模式">
+              <n-radio-group v-model:value="comboMode">
+                <n-radio-button value="OR">OR (任一信号)</n-radio-button>
+                <n-radio-button value="AND">AND (全部满足)</n-radio-button>
+              </n-radio-group>
+            </n-form-item>
+          </n-gi>
         </n-grid>
         <n-space style="margin-top: 16px">
           <n-button type="primary" :loading="running" @click="runBacktest">
             🚀 开始回测
+          </n-button>
+          <n-button v-if="isComboMode" @click="isComboMode = false">
+            切换到单策略模式
           </n-button>
         </n-space>
       </n-form>
@@ -169,28 +215,78 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart, ScatterChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import axios from 'axios'
-import { NRate } from 'naive-ui'
+import { NRate, NAlert, NDivider, NRadioGroup, NRadioButton, useMessage } from 'naive-ui'
 
 use([CanvasRenderer, LineChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent])
 
+const message = useMessage()
 const running = ref(false)
 const addingMonitor = ref(false)
 const result = ref<any>(null)
 const strategies = ref<any[]>([])
+
+// 组合策略相关
+const isComboMode = ref(false)
+const comboStrategyIds = ref<string[]>([])
+const comboMode = ref('OR')
+const comboParams = ref<any[]>([])
+
+// 添加策略到组合
+function addStrategyToCombo() {
+  if (!form.value.strategyId) return
+  
+  // 如果组合中没有这个策略，添加
+  if (!comboStrategyIds.value.includes(form.value.strategyId)) {
+    comboStrategyIds.value.push(form.value.strategyId)
+    
+    // 获取当前策略的默认参数
+    const strategy = strategies.value.find(s => s.id === form.value.strategyId)
+    if (strategy?.params) {
+      comboParams.value.push(strategy.params)
+    } else {
+      comboParams.value.push({})
+    }
+    
+    isComboMode.value = true
+    message.success(`已添加策略: ${strategy?.name || form.value.strategyId}`)
+  } else {
+    message.warning('该策略已在组合中')
+  }
+}
+
+// 清空组合
+function clearCombo() {
+  comboStrategyIds.value = []
+  comboParams.value = []
+  isComboMode.value = false
+  message.info('已清空组合策略')
+}
+
+// 从组合中移除单个策略
+function removeFromCombo(index: number) {
+  comboStrategyIds.value.splice(index, 1)
+  comboParams.value.splice(index, 1)
+  
+  if (comboStrategyIds.value.length === 0) {
+    isComboMode.value = false
+  }
+}
 
 const form = ref({
   stockCode: '000001',
   strategyId: 'ma_cross',
   startDate: Date.now() - 365 * 5 * 24 * 60 * 60 * 1000, // 默认5年
   endDate: Date.now(),
-  initialCapital: 100000
+  initialCapital: 100000,
+  dataFreq: 'day'  // 数据频率: day, 60min, 1min
 })
 
 // 计算当前选择的时间范围（年数）
@@ -203,7 +299,13 @@ const yearsText = computed(() => {
 const setTimeRange = (years: number) => {
   form.value.endDate = Date.now()
   form.value.startDate = Date.now() - years * 365 * 24 * 60 * 60 * 1000
+  // 清除 useDataStart 标记，使用新的时间范围
+  useDataStart.value = false
+  console.log('[回测] 设置时间范围:', years, '年')
 }
+
+// 是否使用数据开始日期
+const useDataStart = ref(false)
 
 const strategyOptions = computed(() =>
   strategies.value.map(s => ({ label: s.name, value: s.id }))
@@ -440,19 +542,39 @@ const investmentAdvice = computed(() => {
 const runBacktest = async () => {
   running.value = true
   try {
-    const res = await axios.post('/api/strategy/backtest', {
-      stock_code: form.value.stockCode,
-      strategy_id: form.value.strategyId,
-      start_date: new Date(form.value.startDate).toISOString().slice(0, 10).replace(/-/g, ''),
-      end_date: new Date(form.value.endDate).toISOString().slice(0, 10).replace(/-/g, ''),
-      initial_capital: form.value.initialCapital
-    })
-    result.value = res.data
-    result.value.stockCode = form.value.stockCode
-    result.value.strategyId = form.value.strategyId
+    // 组合策略模式（至少1个策略）
+    if (isComboMode.value && comboStrategyIds.value.length >= 1) {
+      const res = await axios.post('/api/strategy/combo-backtest', {
+        stock_code: form.value.stockCode,
+        strategy_ids: comboStrategyIds.value,
+        combo_mode: comboMode.value,
+        strategy_params: comboParams.value.length > 0 ? comboParams.value : undefined,
+        data_freq: form.value.dataFreq,
+        start_date: new Date(form.value.startDate).toISOString().slice(0, 10).replace(/-/g, ''),
+        end_date: new Date(form.value.endDate).toISOString().slice(0, 10).replace(/-/g, ''),
+        initial_capital: form.value.initialCapital
+      })
+      result.value = res.data
+      result.value.stockCode = form.value.stockCode
+      result.value.isCombo = true
+    } else if (form.value.strategyId) {
+      // 单策略模式
+      const res = await axios.post('/api/strategy/backtest', {
+        stock_code: form.value.stockCode,
+        strategy_id: form.value.strategyId,
+        start_date: new Date(form.value.startDate).toISOString().slice(0, 10).replace(/-/g, ''),
+        end_date: new Date(form.value.endDate).toISOString().slice(0, 10).replace(/-/g, ''),
+        initial_capital: form.value.initialCapital
+      })
+      result.value = res.data
+      result.value.stockCode = form.value.stockCode
+      result.value.strategyId = form.value.strategyId
+    } else {
+      message.warning('请选择策略或添加组合策略')
+    }
   } catch (e: any) {
     console.error('回测失败', e)
-    alert(e.response?.data?.detail || '回测失败')
+    message.error(e.response?.data?.detail || '回测失败')
   } finally {
     running.value = false
   }
@@ -491,9 +613,91 @@ const addToMonitor = async () => {
 }
 
 onMounted(async () => {
+  const route = useRoute()
+  
   try {
     const res = await axios.get('/api/strategy/list')
     strategies.value = res.data.strategies || []
+    
+    // 从 URL 参数读取
+    await nextTick()
+    if (route.query.stockCode) {
+      form.value.stockCode = route.query.stockCode as string
+      console.log('[回测] 设置股票代码:', form.value.stockCode)
+    }
+    
+    // 组合策略模式
+    if (route.query.strategyIds) {
+      isComboMode.value = true
+      comboStrategyIds.value = (route.query.strategyIds as string).split(',')
+      comboMode.value = (route.query.comboMode as string) || 'OR'
+      form.value.strategyId = comboStrategyIds.value[0] || 'ma_cross'
+      
+      // 数据频率
+      if (route.query.dataFreq) {
+        form.value.dataFreq = route.query.dataFreq as string
+        console.log('[回测] 数据频率:', form.value.dataFreq)
+      }
+      
+      // 解析策略参数
+      if (route.query.paramsJson) {
+        try {
+          const paramsArray = JSON.parse(route.query.paramsJson as string)
+          comboParams.value = paramsArray
+          console.log('[回测] 组合策略参数:', paramsArray)
+        } catch (e) {
+          console.error('[回测] 解析参数失败:', e)
+        }
+      }
+      
+      // 设置时间范围
+      if (route.query.days) {
+        const days = parseInt(route.query.days as string)
+        
+        if (route.query.useDataStart === 'true') {
+          useDataStart.value = true
+          // 从后端获取数据的开始日期
+          try {
+            const infoRes = await axios.get(`/api/data/info?code=${form.value.stockCode}&freq=${form.value.dataFreq}`)
+            if (infoRes.data?.start_date) {
+              const startDate = new Date(infoRes.data.start_date)
+              form.value.startDate = startDate.getTime()
+              // 结束日期 = 开始日期 + days天
+              form.value.endDate = startDate.getTime() + days * 24 * 60 * 60 * 1000
+              console.log('[回测] 从数据开始日期计算:', infoRes.data.start_date, '+', days, '天')
+            } else {
+              // 回退到默认逻辑
+              form.value.endDate = Date.now()
+              form.value.startDate = Date.now() - days * 24 * 60 * 60 * 1000
+              useDataStart.value = false
+            }
+          } catch (e) {
+            console.error('[回测] 获取数据信息失败:', e)
+            form.value.endDate = Date.now()
+            form.value.startDate = Date.now() - days * 24 * 60 * 60 * 1000
+            useDataStart.value = false
+          }
+        } else {
+          // 默认逻辑：从今天往前推
+          form.value.endDate = Date.now()
+          form.value.startDate = Date.now() - days * 24 * 60 * 60 * 1000
+          console.log('[回测] 设置时间范围:', days, '天')
+        }
+      }
+      
+      console.log('[回测] 组合策略模式:', comboStrategyIds.value, comboMode.value)
+    } else if (route.query.strategyId) {
+      form.value.strategyId = route.query.strategyId as string
+      console.log('[回测] 设置策略ID:', form.value.strategyId)
+    }
+    
+    // 如果是组合策略模式，自动运行回测
+    if (isComboMode.value && comboStrategyIds.value.length > 0) {
+      await runBacktest()
+    }
+    
+    await nextTick()
+    console.log('[回测] 表单最终值:', JSON.stringify(form.value))
   } catch (e) {
     console.error('获取策略列表失败')
   }

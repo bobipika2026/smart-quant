@@ -2,6 +2,7 @@
 数据服务 - 使用 AkShare + 新浪财经API + Tushare Pro
 支持实时行情、历史数据、股票搜索
 """
+import os
 import httpx
 import pandas as pd
 import numpy as np
@@ -238,9 +239,18 @@ class DataService:
         code: str,
         start_date: str = None,
         end_date: str = None,
-        adjust: str = "qfq"
+        adjust: str = "qfq",
+        use_cache: bool = True
     ) -> pd.DataFrame:
-        """获取股票历史数据 - 优先级: Tushare Pro > AkShare > 新浪API"""
+        """
+        获取股票历史数据
+        
+        优先级:
+        1. 本地缓存（data_cache/day/{code}_day.csv）
+        2. Tushare Pro
+        3. AkShare
+        4. 新浪API
+        """
         # 计算日期范围
         if not end_date:
             end_date = datetime.now().strftime("%Y%m%d")
@@ -252,7 +262,29 @@ class DataService:
         else:
             start_date = start_date.replace("-", "")
         
-        # 1. 优先使用 Tushare Pro（如果配置了 token）
+        # 0. 优先使用本地缓存
+        if use_cache:
+            cache_file = f"data_cache/day/{code}_day.csv"
+            if os.path.exists(cache_file):
+                try:
+                    df = pd.read_csv(cache_file)
+                    if len(df) > 0:
+                        # 确保日期格式一致（先转字符串再解析）
+                        df['日期'] = pd.to_datetime(df['日期'].astype(str)).dt.strftime('%Y-%m-%d')
+                        
+                        # 日期过滤
+                        start_dt = start_date[:4] + '-' + start_date[4:6] + '-' + start_date[6:8]
+                        end_dt = end_date[:4] + '-' + end_date[4:6] + '-' + end_date[6:8]
+                        
+                        df = df[(df['日期'] >= start_dt) & (df['日期'] <= end_dt)]
+                        df = df.reset_index(drop=True)
+                        
+                        print(f"[本地缓存] 读取日线数据: {code}, {len(df)}条")
+                        return df[['日期', '开盘', '收盘', '最高', '最低', '成交量']]
+                except Exception as e:
+                    print(f"[本地缓存] 读取失败: {e}")
+        
+        # 1. 使用 Tushare Pro（如果配置了 token）
         if settings.TUSHARE_TOKEN:
             try:
                 import tushare as ts
@@ -435,3 +467,195 @@ class DataService:
             return pd.DataFrame(stocks)
         
         return pd.DataFrame()
+    
+    @staticmethod
+    async def get_minute_history(
+        code: str,
+        freq: str = '1min',
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        use_cache: bool = True
+    ) -> pd.DataFrame:
+        """
+        获取分钟线历史数据（前复权）- 使用AkShare
+        
+        Args:
+            code: 股票代码（如 000001）
+            freq: 频率，支持 1min/5min/15min/30min/60min
+            start_date: 开始日期 YYYYMMDD（AkShare分钟线不支持，仅用于过滤）
+            end_date: 结束日期 YYYYMMDD（AkShare分钟线不支持，仅用于过滤）
+            use_cache: 是否使用本地缓存
+        
+        Returns:
+            DataFrame: 分钟线数据
+        """
+        import os
+        
+        # 频率映射
+        freq_map = {
+            '1min': '1',
+            '5min': '5',
+            '15min': '15',
+            '30min': '30',
+            '60min': '60'
+        }
+        period = freq_map.get(freq, '1')
+        
+        # 缓存文件路径
+        cache_dir = "data_cache/minute"
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = f"{cache_dir}/{code}_{freq}.csv"
+        
+        # 检查缓存
+        if use_cache and os.path.exists(cache_file):
+            cached_df = pd.read_csv(cache_file)
+            if len(cached_df) > 0:
+                # 检查缓存是否最新（当天15:00后）
+                last_time = pd.to_datetime(cached_df['时间'].iloc[-1])
+                now = datetime.now()
+                if now.hour >= 15:
+                    if last_time.date() == now.date():
+                        print(f"[分钟线] 使用缓存: {cache_file}, {len(cached_df)}条")
+                        return cached_df
+                elif last_time.date() == now.date():
+                    print(f"[分钟线] 使用缓存: {cache_file}, {len(cached_df)}条")
+                    return cached_df
+        
+        # 从AkShare获取数据
+        print(f"[分钟线] 从AkShare获取: {code} {freq}")
+        
+        # 股票代码转换
+        if code.startswith(('6', '9')):
+            symbol = f"sh{code}"
+        else:
+            symbol = f"sz{code}"
+        
+        try:
+            df = ak.stock_zh_a_minute(symbol=symbol, period=period, adjust='qfq')
+            
+            if df is None or len(df) == 0:
+                print(f"[分钟线] 无数据: {code}")
+                return pd.DataFrame()
+            
+            # 重命名列
+            df = df.rename(columns={
+                'day': '时间',
+                'open': '开盘',
+                'high': '最高',
+                'low': '最低',
+                'close': '收盘',
+                'volume': '成交量',
+                'amount': '成交额'
+            })
+            
+            # 按时间排序
+            df = df.sort_values('时间', ascending=True)
+            df = df.reset_index(drop=True)
+            
+            # 日期过滤
+            if start_date:
+                start_dt = pd.to_datetime(start_date)
+                df = df[pd.to_datetime(df['时间']) >= start_dt]
+            if end_date:
+                end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)
+                df = df[pd.to_datetime(df['时间']) < end_dt]
+            
+            df = df.reset_index(drop=True)
+            
+            # 保存缓存
+            if use_cache and len(df) > 0:
+                df.to_csv(cache_file, index=False)
+                print(f"[分钟线] 已缓存: {cache_file}, {len(df)}条")
+            
+            return df
+            
+        except Exception as e:
+            print(f"[分钟线] 获取失败: {e}")
+            return pd.DataFrame()
+    
+    @staticmethod
+    async def sync_minute_data(
+        codes: List[str] = None,
+        freq: str = '1min',
+        days: int = 30
+    ):
+        """
+        批量同步分钟线数据
+        
+        Args:
+            codes: 股票代码列表，None则同步全部
+            freq: 频率
+            days: 同步天数
+        """
+        if codes is None:
+            # 默认同步银行股
+            codes = ["000001", "002142", "600000", "600036", "601166", "601398", "601939"]
+        
+        end_date = datetime.now().strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+        
+        print(f"=== 同步分钟线数据 ===")
+        print(f"股票数: {len(codes)}, 频率: {freq}, 时间范围: {start_date} ~ {end_date}")
+        
+        success = 0
+        for code in codes:
+            try:
+                df = await DataService.get_minute_history(
+                    code=code,
+                    freq=freq,
+                    start_date=start_date,
+                    end_date=end_date,
+                    use_cache=False  # 强制刷新
+                )
+                if len(df) > 0:
+                    success += 1
+            except Exception as e:
+                print(f"  {code} 失败: {e}")
+        
+        print(f"\n同步完成: {success}/{len(codes)}")
+    
+    @staticmethod
+    def get_cached_data(code: str, freq: str = 'day') -> pd.DataFrame:
+        """
+        从本地缓存获取数据
+        
+        Args:
+            code: 股票代码
+            freq: 频率 ('day', '60min', '1min')
+        
+        Returns:
+            DataFrame: 历史数据
+        """
+        import os
+        
+        # 频率映射到缓存目录
+        cache_map = {
+            'day': ('data_cache/day', '_day.csv'),
+            '60min': ('data_cache/hour', '_60min.csv'),
+            '1min': ('data_cache/minute', '_1min.csv'),
+        }
+        
+        if freq not in cache_map:
+            print(f"[缓存] 不支持的频率: {freq}")
+            return pd.DataFrame()
+        
+        cache_dir, suffix = cache_map[freq]
+        cache_file = f"{cache_dir}/{code}{suffix}"
+        
+        if not os.path.exists(cache_file):
+            print(f"[缓存] 文件不存在: {cache_file}")
+            return pd.DataFrame()
+        
+        try:
+            df = pd.read_csv(cache_file)
+            
+            # 统一列名
+            if '时间' in df.columns:
+                df = df.rename(columns={'时间': '日期'})
+            
+            print(f"[缓存] 读取 {freq} 数据: {code}, {len(df)}条")
+            return df
+            
+        except Exception as e:
+            print(f"[缓存] 读取失败: {e}")
+            return pd.DataFrame()

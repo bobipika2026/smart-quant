@@ -104,9 +104,12 @@ class BestFactorCombination(Base):
     
     # 回测结果
     total_return = Column(Float)
+    annual_return = Column(Float)  # 年化收益率%
+    benchmark_return = Column(Float)  # 基准收益率%
     sharpe_ratio = Column(Float)
     max_drawdown = Column(Float)
     win_rate = Column(Float)
+    profit_loss_ratio = Column(Float)  # 盈亏比
     trade_count = Column(Integer)
     composite_score = Column(Float, index=True)
     

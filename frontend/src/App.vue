@@ -107,6 +107,11 @@ const menuOptions: MenuOption[] = [
     icon: () => '🔍'
   },
   {
+    label: '股票评分',
+    key: 'stock-scoring',
+    icon: () => '⭐'
+  },
+  {
     label: '实时监控',
     key: 'monitor',
     icon: () => '📡'
@@ -115,6 +120,16 @@ const menuOptions: MenuOption[] = [
     label: '因子矩阵',
     key: 'factor-matrix',
     icon: () => '📊'
+  },
+  {
+    label: '因子库',
+    key: 'factor-library',
+    icon: () => '📚'
+  },
+  {
+    label: '最佳策略',
+    key: 'best-factor',
+    icon: () => '🏆'
   }
 ]
 
@@ -127,8 +142,11 @@ const pageTitle = computed(() => {
     'strategy-guide': '策略说明',
     backtest: '回测中心',
     'stock-picker': '选股系统',
+    'stock-scoring': '股票评分',
     monitor: '实时监控',
-    'factor-matrix': '因子矩阵'
+    'factor-matrix': '因子矩阵',
+    'factor-library': '因子库',
+    'best-factor': '最佳策略'
   }
   return titles[route.name as string] || 'Smart Quant'
 })

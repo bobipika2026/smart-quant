@@ -27,3 +27,16 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# 导出最佳因子配置
+from app.config.best_factor_config import (
+    MARKET_TIMING_CONFIG,
+    FACTOR_CONFIG,
+    POSITION_CONFIG,
+    BACKTEST_CONFIG,
+    VALIDATION_CRITERIA,
+    get_factor_weights,
+    get_position_adjustment,
+    get_signal_adjustment,
+    print_config
+)

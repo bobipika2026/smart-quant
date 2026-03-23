@@ -5,7 +5,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import strategy, stock, sync, monitor, picker, factor, factor_matrix, factor_matrix_v2
+from app.api import strategy, stock, sync, monitor, picker, factor, factor_matrix, factor_matrix_v2, data, stock_scoring, backtest, factors, best_factor, sector_rotation, factor_library
 from app.database import init_db
 from app.scheduler import start_scheduler, stop_scheduler
 
@@ -42,6 +42,13 @@ app.include_router(picker.router)
 app.include_router(factor.router)
 app.include_router(factor_matrix.router)
 app.include_router(factor_matrix_v2.router)
+app.include_router(data.router)
+app.include_router(stock_scoring.router)
+app.include_router(backtest.router)
+app.include_router(factors.router)
+app.include_router(best_factor.router)  # 最佳因子策略
+app.include_router(sector_rotation.router)  # 板块轮动监控 v1.8
+app.include_router(factor_library.router)  # 因子库管理 v1.9
 
 
 @app.on_event("startup")

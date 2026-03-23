@@ -199,7 +199,7 @@ async def run_parallel_experiments(
 @router.get("/best-combinations")
 async def list_best_combinations(
     stock_code: Optional[str] = Query(None, description="股票代码筛选"),
-    limit: int = Query(20, ge=1, le=100, description="返回数量")
+    limit: int = Query(200, ge=1, le=50000, description="返回数量")
 ):
     """
     获取最佳因子组合列表
@@ -208,11 +208,13 @@ async def list_best_combinations(
     """
     from app.database import SessionLocal
     from app.models.factor_matrix import BestFactorCombination
+    from app.models import Stock
     from sqlalchemy import desc
     
     db = SessionLocal()
     try:
-        query = db.query(BestFactorCombination).filter(BestFactorCombination.is_active == True)
+        # 不加is_active过滤，直接查所有记录
+        query = db.query(BestFactorCombination)
         
         if stock_code:
             query = query.filter(BestFactorCombination.stock_code == stock_code)
@@ -220,20 +222,33 @@ async def list_best_combinations(
         query = query.order_by(desc(BestFactorCombination.composite_score)).limit(limit)
         records = query.all()
         
+        # 获取股票名称映射
+        stock_codes = list(set(r.stock_code for r in records))
+        stock_map = {}
+        if stock_codes:
+            try:
+                stocks = db.query(Stock.code, Stock.name).filter(Stock.code.in_(stock_codes)).all()
+                stock_map = {s.code: s.name for s in stocks}
+            except Exception as e:
+                stock_map = {"error": str(e)}
+        
         results = []
         for r in records:
             results.append({
                 "id": r.id,
                 "combination_code": r.combination_code,
                 "stock_code": r.stock_code,
-                "stock_name": r.stock_name,
+                "stock_name": stock_map.get(r.stock_code, r.stock_code),
                 "strategy_desc": r.strategy_desc,
                 "factor_combination": json.loads(r.factor_combination) if r.factor_combination else {},
                 "rank_in_stock": r.rank_in_stock,
                 "total_return": r.total_return,
+                "annual_return": getattr(r, 'annual_return', None),
+                "benchmark_return": getattr(r, 'benchmark_return', None),
                 "sharpe_ratio": r.sharpe_ratio,
                 "max_drawdown": r.max_drawdown,
                 "win_rate": r.win_rate,
+                "profit_loss_ratio": getattr(r, 'profit_loss_ratio', None),
                 "trade_count": r.trade_count,
                 "composite_score": r.composite_score,
                 "holding_period": r.holding_period,
